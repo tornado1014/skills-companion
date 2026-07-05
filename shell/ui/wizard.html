@@ -15,8 +15,10 @@ border-radius:8px;padding:8px 16px;cursor:pointer}
 button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
 .total{font-weight:700}
 #done{display:none}
+#err{color:#dc2626;padding:6px 0;font-size:12.5px;display:none}
 .brain-error{background:#fee;border:1px solid #f88;border-radius:6px;padding:8px;margin:8px 0;color:#c00;font-size:13px}
 </style></head><body>
+<div id="err"></div>
 <h2>🪶 경량화 마법사</h2>
 <p class="hint">세션 시작 컨텍스트를 줄입니다. 모든 변경은 백업되며 앱에서 되돌릴 수 있어요.
 현재 추정: <span id="before" class="total">…</span> 토큰</p>
@@ -147,33 +149,33 @@ async function apply() {
   if (fixts && fixts.checked) lw.tool_search = "auto";
 
   let r = await brainSafe("lightweight", "--json", JSON.stringify(lw));
-  if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: lightweight 실패 — 이전 단계는 이미 적용됨"; return; }
+  if (!r) { const el = document.getElementById("err"); if (el) el.innerHTML += " — 적용 중단: lightweight 실패 — 이전 단계는 이미 적용됨"; return; }
 
   for (const k of vals("pl")) {
     r = await brainSafe("disable-plugin", "--plugin", k);
-    if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: disable-plugin 실패 — 이전 단계는 이미 적용됨"; return; }
+    if (!r) { const el = document.getElementById("err"); if (el) el.innerHTML += " — 적용 중단: disable-plugin 실패 — 이전 단계는 이미 적용됨"; return; }
   }
 
   for (const n of vals("mc")) {
     r = await brainSafe("stash-mcp", "--name", n);
-    if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: stash-mcp 실패 — 이전 단계는 이미 적용됨"; return; }
+    if (!r) { const el = document.getElementById("err"); if (el) el.innerHTML += " — 적용 중단: stash-mcp 실패 — 이전 단계는 이미 적용됨"; return; }
   }
 
   for (const f of vals("ag")) {
     r = await brainSafe("archive-agent", "--file", f);
-    if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: archive-agent 실패 — 이전 단계는 이미 적용됨"; return; }
+    if (!r) { const el = document.getElementById("err"); if (el) el.innerHTML += " — 적용 중단: archive-agent 실패 — 이전 단계는 이미 적용됨"; return; }
   }
 
   for (const el of document.querySelectorAll("input.mig:checked")) {
     r = await brainSafe("migrate-skill", "--project", el.dataset.proj, "--name", el.value);
-    if (!r) { const err = document.getElementById("err"); err.innerHTML += " — 적용 중단: migrate-skill 실패 — 이전 단계는 이미 적용됨"; return; }
+    if (!r) { const err = document.getElementById("err"); if (err) err.innerHTML += " — 적용 중단: migrate-skill 실패 — 이전 단계는 이미 적용됨"; return; }
   }
 
   r = await brainSafe("config-set", "--json", '{"wizard_completed": true}');
-  if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: config-set 실패 — 이전 단계는 이미 적용됨"; return; }
+  if (!r) { const el = document.getElementById("err"); if (el) el.innerHTML += " — 적용 중단: config-set 실패 — 이전 단계는 이미 적용됨"; return; }
 
   const rep = await brainSafe("context-report");
-  if (!rep) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: context-report 실패 — 이전 단계는 이미 적용됨"; return; }
+  if (!rep) { const el = document.getElementById("err"); if (el) el.innerHTML += " — 적용 중단: context-report 실패 — 이전 단계는 이미 적용됨"; return; }
 
   document.getElementById("steps").style.display = "none";
   document.getElementById("done").style.display = "block";
