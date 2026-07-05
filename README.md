@@ -21,7 +21,7 @@ Claude Code의 스킬/플러그인 카탈로그를 다기준(facet)으로 보여
 
 ## 현재 상태
 
-구현 진행 중 — **Phase 1 완료 (Task 9/20)**: Python 두뇌 전체(paths·stores·scanner·transcripts·recommender·activation·revert·CLI), 테스트 35개 통과.
+구현 진행 중 — **Phase 1·2 완료 + Task 14 (Task 14/20)**: Python 두뇌 전체(테스트 39개 통과), SessionEnd 훅+설치기, Tauri 셸(트레이·brain 브리지·폴 루프·카탈로그 UI·되돌림 다이얼로그) 빌드 성공. 남은 것: 마법사·리포트(16~20), 실환경 마이그레이션(15, 사용자 확인 게이트).
 
 ## 문서
 
