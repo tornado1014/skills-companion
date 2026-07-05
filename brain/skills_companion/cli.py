@@ -1,7 +1,8 @@
 import argparse
 import json
 
-from . import activation, paths, recommender, revert, scanner, stores, transcripts
+from . import (activation, context_report, inventory, lightweight, paths,
+               recommender, revert, scanner, stores, transcripts)
 
 
 def _cmd_recommend(args):
@@ -42,6 +43,21 @@ def main(argv=None):
     sub.add_parser("config-get")
     p = sub.add_parser("config-set")
     p.add_argument("--json", required=True)
+    sub.add_parser("inventory")
+    sub.add_parser("context-report")
+    p = sub.add_parser("lightweight")
+    p.add_argument("--json", required=True)
+    p = sub.add_parser("archive-agent")
+    p.add_argument("--file", required=True)
+    p = sub.add_parser("restore-agent")
+    p.add_argument("--file", required=True)
+    p = sub.add_parser("stash-mcp")
+    p.add_argument("--name", required=True)
+    p = sub.add_parser("restore-mcp")
+    p.add_argument("--name", required=True)
+    p = sub.add_parser("migrate-skill")
+    p.add_argument("--project", required=True)
+    p.add_argument("--name", required=True)
     p = sub.add_parser("install-hooks")
     p.add_argument("--script", required=True)
     p = sub.add_parser("uninstall-hooks")
@@ -74,6 +90,33 @@ def main(argv=None):
         cfg.update(json.loads(getattr(args, "json")))
         stores.save_config(cfg)
         out = cfg
+    elif args.cmd == "inventory":
+        out = {"agents": inventory.scan_agents(), "mcp": inventory.scan_mcp(),
+               "projects": inventory.discover_projects(),
+               "tool_search": inventory.tool_search_status()}
+    elif args.cmd == "context-report":
+        out = context_report.report()
+    elif args.cmd == "lightweight":
+        spec = json.loads(getattr(args, "json"))
+        results = {}
+        if spec.get("silence"):
+            results["silence"] = lightweight.silence_skills(spec["silence"])
+        if spec.get("unsilence"):
+            results["unsilence"] = lightweight.unsilence_skills(spec["unsilence"])
+        if spec.get("tool_search"):
+            results["tool_search"] = lightweight.set_tool_search(spec["tool_search"])
+        out = {"ok": all(r.get("ok") for r in results.values()) if results else True,
+               "results": results}
+    elif args.cmd == "archive-agent":
+        out = lightweight.archive_agent(args.file)
+    elif args.cmd == "restore-agent":
+        out = lightweight.restore_agent(args.file)
+    elif args.cmd == "stash-mcp":
+        out = lightweight.stash_mcp(args.name)
+    elif args.cmd == "restore-mcp":
+        out = lightweight.restore_mcp(args.name)
+    elif args.cmd == "migrate-skill":
+        out = lightweight.migrate_skill(args.project, args.name)
     elif args.cmd == "install-hooks":
         from . import installer
         out = installer.install_hooks(args.script)

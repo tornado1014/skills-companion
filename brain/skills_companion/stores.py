@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "per_plugin": {},              # plugin_key -> policy
     "notifications_enabled": False,
     "poll_seconds": 20,
+    "wizard_completed": False,
 }
 
 

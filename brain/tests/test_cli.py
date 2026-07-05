@@ -45,3 +45,27 @@ def test_config_set_merges(claude_home, capsys):
     out = _run(capsys, ["config-set", "--json", '{"default_policy": "keep"}'])
     assert out["default_policy"] == "keep"
     assert out["poll_seconds"] == 20
+
+
+def test_cli_inventory_and_report(claude_home, capsys):
+    inv = _run(capsys, ["inventory"])
+    assert inv["agents"][0]["name"] == "oa-analyzer"
+    assert inv["mcp"][0]["name"] == "exa"
+    assert inv["tool_search"]["deferred"] is True
+    rep = _run(capsys, ["context-report"])
+    assert rep["total_estimate"] > 0
+
+
+def test_cli_lightweight_bundle(claude_home, capsys):
+    out = _run(capsys, ["lightweight", "--json",
+                        '{"silence": ["domain-modeling"], "tool_search": "auto"}'])
+    assert out["ok"] is True
+    from skills_companion import paths, stores
+    s = stores.read_json(paths.settings_path(), {})
+    assert s["skillOverrides"]["domain-modeling"] == "user-invocable-only"
+    assert s["env"]["ENABLE_TOOL_SEARCH"] == "auto"
+
+
+def test_cli_wizard_flag_default(claude_home, capsys):
+    cfg = _run(capsys, ["config-get"])
+    assert cfg["wizard_completed"] is False
