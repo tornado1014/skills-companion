@@ -28,6 +28,13 @@ def test_activate_already_enabled_no_ledger(claude_home):
     assert "S1" not in stores.load_ledger()
 
 
+def test_activate_already_enabled_by_app_is_ledger_tracked(claude_home):
+    activation.activate(UA, session_id="S1", cwd="/w")     # app flips it
+    r = activation.activate(UA, session_id="S2")           # already enabled by app
+    assert r["ok"] and r["already_enabled"] is True
+    assert [e["plugin"] for e in stores.load_ledger()["S2"]] == [UA]
+
+
 def test_activate_unknown_plugin(claude_home):
     r = activation.activate("nope@nowhere", session_id="S1")
     assert r["ok"] is False and "unknown" in r["error"]
