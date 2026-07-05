@@ -62,20 +62,33 @@ function esc(s) {
   }[c]));
 }
 
-function showBrainError(msg) {
-  const errDiv = document.createElement("div");
-  errDiv.className = "brain-error";
-  errDiv.textContent = "브레인 호출 실패: " + msg;
-  document.getElementById("steps").insertBefore(errDiv, document.getElementById("steps").firstChild);
+function clearErr() {
+  const el = document.getElementById("err");
+  if (el) {
+    el.innerHTML = "";
+    el.style.display = "none";
+  }
+}
+
+async function brainSafe(...args) {
+  try {
+    const r = await brain(...args);
+    clearErr();
+    return r;
+  } catch (e) {
+    const el = document.getElementById("err");
+    if (el) {
+      el.innerHTML = "브레인 호출 실패: " + esc(String(e));
+      el.style.display = "block";
+    }
+    return null;
+  }
 }
 
 async function load() {
-  try {
-    const [scan, invres, rep] = await Promise.all(
-      [brain("scan"), brain("inventory"), brain("context-report")]);
+  const scan = await brainSafe("scan");
+  if (scan) {
     cat = scan.items;
-    inventory = invres;
-    document.getElementById("before").textContent = rep.total_estimate;
     const loaded = cat.filter(i => i.source === "personal" && i.state === "loaded");
     personalNames = new Set(cat.filter(i => i.source === "personal")
                                .map(i => i.invoke.slice(1)));
@@ -84,6 +97,11 @@ async function load() {
           value="${esc(i.invoke.slice(1))}" checked> <code>${esc(i.invoke)}</code>
           <span class="hint">${esc((i.desc||"").slice(0,90))}</span></label>`).join("")
       : "<i>이미 모두 수동 상태입니다.</i>";
+  }
+
+  const invres = await brainSafe("inventory");
+  if (invres) {
+    inventory = invres;
     const plugkeys = [...new Set(cat.filter(i => i.source === "plugin"
         && i.state === "enabled").map(i => i.plugin))];
     document.getElementById("plugins").innerHTML = plugkeys.map(k =>
@@ -91,7 +109,7 @@ async function load() {
        <code>${esc(k)}</code></label>`).join("") || "<i>활성 플러그인 없음</i>";
     const ts = invres.tool_search;
     document.getElementById("toolsearch").innerHTML = ts.deferred
-      ? `<p>✅ 지연로딩 활성 (현재: <code>${ts.value ?? "auto(기본)"}</code>) — 조치 불필요</p>`
+      ? `<p>✅ 지연로딩 활성 (현재: <code>${esc(ts.value ?? "auto(기본)")}</code>) — 조치 불필요</p>`
       : `<p>⚠️ <code>ENABLE_TOOL_SEARCH=false</code> — MCP 스키마 전체가 시작 시 로딩 중.
          <label><input type="checkbox" id="fixts" checked> <b>auto로 전환 (강력 추천)</b></label></p>`;
     document.getElementById("mcp").innerHTML = "<b>MCP 서버(user)</b>: " +
@@ -112,8 +130,11 @@ async function load() {
            data-proj="${esc(p.cwd)}" value="${esc(s)}"> 전역으로 이동:
            <code>/${esc(s)}</code></label>`).join("") + "</div>").join("")
       || "<i>스킬을 가진 로컬 프로젝트가 발견되지 않았습니다.</i>";
-  } catch (e) {
-    showBrainError(e.toString());
+  }
+
+  const rep = await brainSafe("context-report");
+  if (rep) {
+    document.getElementById("before").textContent = rep.total_estimate;
   }
 }
 
@@ -121,36 +142,55 @@ const vals = cls => [...document.querySelectorAll("input." + cls + ":checked")]
   .map(x => x.value);
 
 async function apply() {
+  const lw = { silence: vals("sk") };
+  const fixts = document.getElementById("fixts");
+  if (fixts && fixts.checked) lw.tool_search = "auto";
+
+  let r = await brainSafe("lightweight", "--json", JSON.stringify(lw));
+  if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: lightweight 실패 — 이전 단계는 이미 적용됨"; return; }
+
+  for (const k of vals("pl")) {
+    r = await brainSafe("disable-plugin", "--plugin", k);
+    if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: disable-plugin 실패 — 이전 단계는 이미 적용됨"; return; }
+  }
+
+  for (const n of vals("mc")) {
+    r = await brainSafe("stash-mcp", "--name", n);
+    if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: stash-mcp 실패 — 이전 단계는 이미 적용됨"; return; }
+  }
+
+  for (const f of vals("ag")) {
+    r = await brainSafe("archive-agent", "--file", f);
+    if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: archive-agent 실패 — 이전 단계는 이미 적용됨"; return; }
+  }
+
+  for (const el of document.querySelectorAll("input.mig:checked")) {
+    r = await brainSafe("migrate-skill", "--project", el.dataset.proj, "--name", el.value);
+    if (!r) { const err = document.getElementById("err"); err.innerHTML += " — 적용 중단: migrate-skill 실패 — 이전 단계는 이미 적용됨"; return; }
+  }
+
+  r = await brainSafe("config-set", "--json", '{"wizard_completed": true}');
+  if (!r) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: config-set 실패 — 이전 단계는 이미 적용됨"; return; }
+
+  const rep = await brainSafe("context-report");
+  if (!rep) { const el = document.getElementById("err"); el.innerHTML += " — 적용 중단: context-report 실패 — 이전 단계는 이미 적용됨"; return; }
+
+  document.getElementById("steps").style.display = "none";
+  document.getElementById("done").style.display = "block";
+  document.getElementById("after").innerHTML =
+    `적용 후 추정: <span class="total">${esc(rep.total_estimate.toString())}</span> 토큰`;
+
   try {
-    const lw = { silence: vals("sk") };
-    const fixts = document.getElementById("fixts");
-    if (fixts && fixts.checked) lw.tool_search = "auto";
-    await brain("lightweight", "--json", JSON.stringify(lw));
-    for (const k of vals("pl")) await brain("disable-plugin", "--plugin", k);
-    for (const n of vals("mc")) await brain("stash-mcp", "--name", n);
-    for (const f of vals("ag")) await brain("archive-agent", "--file", f);
-    for (const el of document.querySelectorAll("input.mig:checked"))
-      await brain("migrate-skill", "--project", el.dataset.proj, "--name", el.value);
-    await brain("config-set", "--json", '{"wizard_completed": true}');
-    const rep = await brain("context-report");
-    document.getElementById("steps").style.display = "none";
-    document.getElementById("done").style.display = "block";
-    document.getElementById("after").innerHTML =
-      `적용 후 추정: <span class="total">${esc(rep.total_estimate.toString())}</span> 토큰`;
-    inv("notify", { title: "경량화 완료",
+    await inv("notify", { title: "경량화 완료",
       body: "새 Claude 세션부터 적용됩니다." });
   } catch (e) {
-    showBrainError(e.toString());
+    /* 무시: 알림 실패는 완료를 막지 않음 */
   }
 }
 
 async function skipWizard() {
-  try {
-    await brain("config-set", "--json", '{"wizard_completed": true}');
-    window.close();
-  } catch (e) {
-    showBrainError(e.toString());
-  }
+  const r = await brainSafe("config-set", "--json", '{"wizard_completed": true}');
+  if (r) window.close();
 }
 
 document.getElementById("apply").addEventListener("click", apply);
