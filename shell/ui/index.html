@@ -57,6 +57,11 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
     <label style="margin-left:12px"><input type="checkbox" id="notifs"> 추천 알림 켜기</label>
   </div>
   <table id="perPlugin"></table>
+  <div id="report" style="margin-top:12px">
+    <b>📊 컨텍스트 리포트 (추정)</b>
+    <button data-act="wizard" style="margin-left:8px">마법사 다시 실행</button>
+    <table id="reportTable" style="width:100%;border-collapse:collapse;font-size:12.5px"></table>
+  </div>
 </div>
 </div>
 <script>
@@ -165,6 +170,18 @@ async function saveConfig(patch) {
   loadSettings();
 }
 
+async function loadReport() {
+  const rep = await brainSafe("context-report");
+  if (!rep) return;
+  document.getElementById("reportTable").innerHTML =
+    rep.rows.map(r => `<tr><td style="padding:3px 6px;border-top:1px solid var(--line)">
+      ${r.controllable ? "🎛" : "📎"} ${esc(r.label)}</td>
+      <td style="text-align:right">${esc(r.tokens ?? "—")}</td>
+      <td style="color:var(--muted)">${esc(r.advice)}</td></tr>`).join("") +
+    `<tr><td style="padding:3px 6px"><b>합계(추정)</b></td>
+     <td style="text-align:right"><b>${esc(rep.total_estimate)}</b></td><td></td></tr>`;
+}
+
 async function load() {
   const r = await brainSafe("scan");
   if (!r) { document.getElementById("list").innerHTML = ""; return; }
@@ -172,6 +189,7 @@ async function load() {
   render();
   loadRecs();
   loadSettings();
+  loadReport();
 }
 
 document.addEventListener("click", e => {
@@ -181,7 +199,8 @@ document.addEventListener("click", e => {
   else if (b.dataset.act === "unset") {
     const pp = { ...config.per_plugin }; delete pp[b.dataset.plugin];
     saveConfig({ per_plugin: pp });
-  } else if (b.id === "refresh") load();
+  } else if (b.dataset.act === "wizard") inv("open_wizard");
+  else if (b.id === "refresh") load();
 });
 document.getElementById("groupBy").addEventListener("change", render);
 document.getElementById("fDisabled").addEventListener("change", render);

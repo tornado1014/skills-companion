@@ -77,6 +77,19 @@ fn open_main(app: &AppHandle) {
     }
 }
 
+#[tauri::command]
+fn open_wizard(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("wizard") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let _ = WebviewWindowBuilder::new(&app, "wizard", WebviewUrl::App("wizard.html".into()))
+        .title("경량화 마법사 — Skills Companion")
+        .inner_size(760.0, 680.0)
+        .build();
+}
+
 fn open_revert(app: &AppHandle, session: &str) {
     let label = format!("revert-{}", &session[..session.len().min(8)]);
     if app.get_webview_window(&label).is_some() {
@@ -222,7 +235,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(RecState(Mutex::new(vec![])))
         .invoke_handler(tauri::generate_handler![
-            brain, copy_text, notify, autotype_reload
+            brain, copy_text, notify, autotype_reload, open_wizard
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -261,6 +274,14 @@ fn main() {
                         .and_then(|c| c["poll_seconds"].as_u64())
                         .unwrap_or(20);
                     std::thread::sleep(Duration::from_secs(secs));
+                }
+            });
+            let h2 = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Ok(c) = run_brain(&["config-get"]) {
+                    if c["wizard_completed"] == false {
+                        open_wizard(h2);
+                    }
                 }
             });
             Ok(())
