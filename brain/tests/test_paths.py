@@ -21,3 +21,8 @@ def test_state_dirs_created(monkeypatch, tmp_path):
 def test_default_is_home_claude(monkeypatch):
     monkeypatch.delenv("SKILLS_COMPANION_CLAUDE_HOME", raising=False)
     assert str(paths.claude_home()).endswith("/.claude")
+
+
+def test_claude_json_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("SKILLS_COMPANION_CLAUDE_HOME", str(tmp_path / ".claude"))
+    assert paths.claude_json_path() == tmp_path / ".claude.json"

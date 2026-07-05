@@ -40,3 +40,7 @@ def signals_dir() -> Path:
     p = state_dir() / "session-ended"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def claude_json_path() -> Path:
+    return claude_home().parent / ".claude.json"

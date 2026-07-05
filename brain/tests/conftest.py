@@ -30,6 +30,11 @@ def claude_home(tmp_path, monkeypatch):
     (kl / "commands" / "research.md").write_text(
         "---\nname: research\ndescription: 법령 판례 리서치 legal research\n---\nbody\n",
         encoding="utf-8")
+    ag = home / "agents"
+    ag.mkdir()
+    (ag / "oa-analyzer.md").write_text(
+        "---\nname: oa-analyzer\ndescription: 특허 OA 분석 에이전트\n---\nbody\n",
+        encoding="utf-8")
     settings = {
         "enabledPlugins": {
             "understand-anything@understand-anything": False,
@@ -39,6 +44,9 @@ def claude_home(tmp_path, monkeypatch):
     }
     (home / "settings.json").write_text(
         json.dumps(settings, ensure_ascii=False), encoding="utf-8")
+    (tmp_path / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {"exa": {"command": "npx", "args": ["exa-mcp"]}}}),
+        encoding="utf-8")
     (home / "projects" / "-tmp-work").mkdir(parents=True)
     monkeypatch.setenv("SKILLS_COMPANION_CLAUDE_HOME", str(home))
     return home
@@ -46,11 +54,11 @@ def claude_home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def write_transcript(claude_home):
-    def _write(session_id, texts, mtime=None, tools=None):
+    def _write(session_id, texts, mtime=None, tools=None, cwd="/tmp/work"):
         lines = []
         for t in texts:
             lines.append(json.dumps(
-                {"type": "user", "sessionId": session_id, "cwd": "/tmp/work",
+                {"type": "user", "sessionId": session_id, "cwd": cwd,
                  "message": {"role": "user", "content": t}}, ensure_ascii=False))
         for name in tools or []:
             lines.append(json.dumps(
