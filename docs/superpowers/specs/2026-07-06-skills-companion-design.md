@@ -56,9 +56,29 @@ keyword matching — and can **(re)activate a disabled plugin** on one click, wi
   timestamps; the source of truth for what to revert.
 - **Leak** — a session-scoped activation whose session ended without the SessionEnd
   hook firing (e.g. Ctrl+C, terminal close, crash); caught by the Leak Sweep.
+- **Lightweighting** — the bulk, user-confirmed reduction of startup context:
+  silencing skills, disabling plugins, enabling MCP tool-search deferral, stashing
+  MCP servers, archiving agents, migrating project skills. Distinct from
+  Activation: not session-scoped, never touched by the Revert Engine.
+- **Lightweighting Wizard** — first-run (re-runnable) window that walks the user
+  through Lightweighting. Personal skills default to silence; the user unchecks
+  the ones Claude should keep auto-invoking.
+- **Context Report** — per-contributor estimate of startup-context cost (skills,
+  plugins, agents, MCP, CLAUDE.md, MEMORY.md, SessionStart hooks) with
+  controllable vs report-only badges. Token figures are chars/4 heuristics.
+- **MCP Stash** — reversible removal of a user-scope MCP server: its config JSON
+  is saved under app state, then `claude mcp remove`; restore via
+  `claude mcp add-json`.
+- **Agent Archive** — reversible move of a user agent `.md` out of
+  `~/.claude/agents/` into app state (no supported disable knob exists for agents).
+- **Skill Migration** — moving a project skill folder to `~/.claude/skills/`
+  (fully supported; personal beats project on name collision, so collisions are
+  blocked, not merged).
 
-> Personal skills are **never** activated/reverted — they are only recommended for
-> manual invocation. The entire activation/revert lifecycle concerns **plugins**.
+> Personal skills are **never** activated/reverted by the session lifecycle — they
+> are only recommended for manual invocation; the activation/revert lifecycle
+> concerns **plugins**. The Wizard's bulk Lightweighting is the only thing that
+> changes skill visibility, always behind an explicit user confirmation.
 
 ---
 
@@ -91,6 +111,26 @@ and this session's research).
   enable, not a skillOverride edit.)
 - **C8 — settings.json hot-reloads** on change, but per C1 that alone does not load
   plugin components into a running session.
+- **C9 — No per-server MCP disable knob.** No documented settings key disables a
+  single MCP server in place. The only supported mutations are the `claude mcp`
+  CLI (`remove`, `add-json`); `~/.claude.json` and `installed_plugins.json` are
+  internal state the app must never write (read-only discovery is fine).
+- **C10 — Agents have no disable mechanism.** Agent descriptions (~150–400 tokens
+  each) always load from `agents/` dirs; no frontmatter key or settings override
+  exists. Moving the file out of the directory is the only lever.
+- **C11 — Tool-search deferral.** `ENABLE_TOOL_SEARCH` env (settings `env` block):
+  unset/`auto` (default) defers MCP tool schemas; `false` loads all schemas
+  upfront (~500–2000+ tokens/server). Even deferred, tool names + server
+  instructions (~120–500 tokens/server) still load.
+- **C12 — Report-only surfaces.** CLAUDE.md (all scopes, loaded whole; no cap) and
+  auto-memory MEMORY.md (first 200 lines / 25KB) are measured but never written by
+  the app. SessionStart hook stdout injects context; the app lists hooks but never
+  edits hooks it does not own (its own hook: Task 14 installer only).
+- **C13 — Project scope.** Project skills (`<proj>/.claude/skills/`) may be MOVED
+  to `~/.claude/skills/` (supported; personal wins name collisions). Project-scoped
+  plugin installs are internal state → read-only display. Project roots are
+  discovered from transcript `cwd` fields, NOT by decoding `~/.claude/projects/`
+  dir names (lossy encoding).
 
 **Design consequence:** the hook only *signals*; the resident app *decides, asks,
 activates, reverts*; activation completion (`/reload-plugins`) is externalized to
@@ -108,12 +148,22 @@ the user via clipboard (portable) + optional macOS auto-type (best-effort).
   macOS best-effort auto-type).
 - Session-scoped revert with configurable policy (`ask` default + per-plugin memory)
   and a leak-sweep fallback.
+- First-run **Lightweighting Wizard** (re-runnable): bulk-silence personal skills
+  (default all silenced, user unchecks keepers), opt-in plugin disable,
+  tool-search deferral check/fix, and advanced opt-in MCP Stash & Agent Archive —
+  all reversible from the app.
+- **Context Report**: per-contributor startup-cost dashboard with
+  controllable/report-only badges.
+- Project-scope inventory: discover projects from transcript cwds; offer
+  project→global **Skill Migration**; show project plugins/`.mcp.json` read-only.
 
 **Non-Goals (now)**
 - Windows/Linux packaging (code stays portable; packaging is later).
 - Live-updating panel mode.
-- Recommending or toggling agents.
-- Un-silencing personal skills (skill state changes).
+- Recommending agents (Agent Archive is a wizard bulk-op, not a recommendation).
+- Session-scoped skill state changes (Activation/Revert stays plugins-only).
+- Writing `~/.claude.json`, `installed_plugins.json`, CLAUDE.md, MEMORY.md, or
+  hooks the app does not own.
 - Any AI/LLM in the recommendation path.
 
 ---
@@ -172,6 +222,23 @@ Two cooperating layers, so the recommendation logic is testable without a GUI.
    *Note:* the active `session_id` is derived from the newest transcript's filename
    (`<uuid>.jsonl`), so **no SessionStart signal hook is needed**.
 8. **Stores** — Ledger + Config JSON with atomic writes.
+9. **Inventory** — *what:* scan user agents (`~/.claude/agents/*.md`), user-scope
+   MCP servers (`~/.claude.json` read-only), tool-search status (settings `env`),
+   and project roots (transcript cwds → `.claude/skills/`, `.mcp.json` presence).
+   *Interface:* `inventory() → JSON`. *Deps:* paths, stores, scanner frontmatter.
+10. **Lightweighter** — *what:* bulk ops, each with settings backup:
+    silence/unsilence skills, set `ENABLE_TOOL_SEARCH`, archive/restore agents
+    (file move ↔ `state/agents-archived/`), stash/restore MCP (config JSON to
+    `state/mcp-stash/` + `claude mcp` CLI), migrate project skill (dir move,
+    collision-blocked). *Interface:* per-op functions + CLI verbs. *Deps:*
+    stores, paths, subprocess (`claude` on PATH).
+11. **Context Reporter** — *what:* per-contributor startup-token estimates
+    (chars/4) with controllable/report-only badges; includes CLAUDE.md,
+    MEMORY.md (loaded slice), SessionStart hook list. *Interface:*
+    `report() → {rows, total_estimate, tool_search}`.
+12. **Wizard UI** — *what:* first-run window (re-runnable from the main window);
+    steps skills→plugins→tool-search→advanced(MCP/agents)→projects→apply;
+    marks `wizard_completed` in Config. *Deps:* brain CLI verbs.
 
 ---
 
@@ -182,7 +249,9 @@ Two cooperating layers, so the recommendation logic is testable without a GUI.
 - **Recommendation:** `{item, score, kind: actionable|informational, reasons:[matched terms]}`
 - **LedgerEntry:** `{session_id, plugin, activated_at, cwd}`
 - **Config:** `{default_policy: ask|auto-revert|keep, per_plugin: {plugin: ask|auto-revert|keep},
-  notifications_enabled: bool, poll_seconds: 20}`
+  notifications_enabled: bool, poll_seconds: 20, wizard_completed: bool}`
+- **State dirs (additions):** `state/mcp-stash/<server>.json` (stashed MCP configs),
+  `state/agents-archived/<file>.md` (archived agents).
 
 ---
 
@@ -228,6 +297,21 @@ Two cooperating layers, so the recommendation logic is testable without a GUI.
   (transcript idle beyond threshold AND no recent end-signal), surface a "lingering
   activations" prompt per policy. Nothing stays enabled silently without the user
   having seen a choice (unless policy = keep).
+
+**Lightweighting Wizard (first run, re-runnable)**
+1. Shell reads config → `wizard_completed == false` → opens the wizard window.
+2. Wizard loads `scan` + `inventory` + `context-report`.
+3. Steps: ① personal skills — all pre-checked → silence; unchecked = keep auto
+   (Q: user decision A) ② enabled plugins — opt-in disable ③ tool-search — if
+   `false`, recommend `auto`/`true` ④ 고급 (collapsed): user-scope MCP Stash,
+   user Agent Archive — opt-in ⑤ discovered projects — per-skill "전역으로 이동"
+   (collision-blocked) ⑥ summary → [적용].
+4. Apply = sequential brain calls (`lightweight`, `stash-mcp`, `archive-agent`,
+   `migrate-skill`), every settings write backed up; then
+   `config-set {"wizard_completed": true}`; show before/after Context Report.
+5. Everything undoable from the app: unsilence toggle, plugin re-enable,
+   `restore-mcp`, `restore-agent` (skill migration undo = manual move-back,
+   documented in UI).
 
 ---
 
@@ -309,3 +393,8 @@ Two cooperating layers, so the recommendation logic is testable without a GUI.
 - **R3** "Active session = newest transcript" can misattribute if the user rapidly
   interleaves sessions. Mitigation: recommendations are advisory; the Ledger (keyed
   by session_id from activation time) is authoritative for revert.
+- **R4** MCP Stash/Restore requires the `claude` CLI on PATH and its `mcp
+  remove`/`add-json` behavior may drift. Mitigation: availability check before
+  offering, surface stderr verbatim, keep the stash file until restore succeeds.
+- **R5** Context Report figures are chars/4 heuristics, not measured tokens —
+  UI labels them "추정" and never promises exact counts.

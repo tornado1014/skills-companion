@@ -24,6 +24,14 @@
 - User-facing UI strings in **Korean**; code identifiers in English.
 - Repo root for all paths below: `~/Desktop/Work_with_Claude_Mac/skills-companion/`. Brain tests run from `brain/`: `python3 -m pytest -q`.
 - Commit after every task (messages given per task).
+- **Wizard defaults (spec §9):** personal skills pre-checked to silence (user
+  unchecks keepers); plugins default keep (opt-in disable); MCP Stash & Agent
+  Archive live in a collapsed "고급" section, opt-in.
+- **Never write (spec C9/C12):** `~/.claude.json`, `installed_plugins.json`,
+  CLAUDE.md, MEMORY.md, hooks the app does not own. MCP mutations only via
+  `claude mcp remove` / `claude mcp add-json` subprocess.
+- New state dirs: `state/mcp-stash/`, `state/agents-archived/`. Config gains
+  `"wizard_completed": false`.
 
 ## File Structure
 
@@ -2452,8 +2460,895 @@ git commit -m "feat(install): LaunchAgent, /myskills repoint, cheatsheet retirem
 
 ---
 
+# Phase 4 — Lightweighting Wizard & Context Report
+
+*(Brain tasks 16–18 depend only on Phase 1 + Task 14; UI tasks 19–20 depend on Phase 2.)*
+
+### Task 16: Inventory + Context Reporter (brain)
+
+**Files:**
+- Modify: `brain/skills_companion/paths.py` (add `claude_json_path`), `brain/tests/test_paths.py`, `brain/tests/conftest.py` (agents + `.claude.json` fixtures, `cwd` param)
+- Create: `brain/skills_companion/inventory.py`, `brain/skills_companion/context_report.py`, `brain/tests/test_inventory.py`, `brain/tests/test_context_report.py`
+
+**Interfaces:**
+- Consumes: `paths`, `stores`, `scanner.parse_frontmatter`, `transcripts.newest_session`.
+- Produces:
+  - `paths.claude_json_path() -> Path` (`claude_home().parent / ".claude.json"` — read-only surface),
+  - `inventory.scan_agents() -> [{"name","desc","path","source":"user"}]`,
+  - `inventory.scan_mcp() -> [{"name","scope":"user","config"}]`,
+  - `inventory.discover_projects(max_transcripts=200) -> [{"cwd","skills":[name],"has_mcp_json":bool}]` (from transcript `cwd` fields),
+  - `inventory.tool_search_status() -> {"value": str|None, "deferred": bool}`,
+  - `context_report.report() -> {"rows":[{"key","label","tokens","controllable","advice"}], "total_estimate", "tool_search"}` with row keys `personal_skills, plugins, agents, mcp, claude_md, memory_md, hooks`.
+
+- [ ] **Step 1: Extend fixtures and write failing tests**
+
+Append to `brain/tests/test_paths.py`:
+```python
+def test_claude_json_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("SKILLS_COMPANION_CLAUDE_HOME", str(tmp_path / ".claude"))
+    assert paths.claude_json_path() == tmp_path / ".claude.json"
+```
+
+In `brain/tests/conftest.py`, inside the `claude_home` fixture **before** `monkeypatch.setenv`, add:
+```python
+    ag = home / "agents"
+    ag.mkdir()
+    (ag / "oa-analyzer.md").write_text(
+        "---\nname: oa-analyzer\ndescription: 특허 OA 분석 에이전트\n---\nbody\n",
+        encoding="utf-8")
+    (tmp_path / ".claude.json").write_text(json.dumps(
+        {"mcpServers": {"exa": {"command": "npx", "args": ["exa-mcp"]}}}),
+        encoding="utf-8")
+```
+And change `write_transcript`'s signature/body to accept a cwd:
+```python
+    def _write(session_id, texts, mtime=None, tools=None, cwd="/tmp/work"):
+```
+(replace the hardcoded `"cwd": "/tmp/work"` with `"cwd": cwd`).
+
+`brain/tests/test_inventory.py`:
+```python
+from skills_companion import inventory
+
+
+def test_scan_agents(claude_home):
+    ags = inventory.scan_agents()
+    assert ags[0]["name"] == "oa-analyzer"
+    assert "특허" in ags[0]["desc"]
+
+
+def test_scan_mcp_user_scope(claude_home):
+    mcp = inventory.scan_mcp()
+    assert mcp[0]["name"] == "exa" and mcp[0]["scope"] == "user"
+    assert mcp[0]["config"]["command"] == "npx"
+
+
+def test_tool_search_status_default_deferred(claude_home):
+    st = inventory.tool_search_status()
+    assert st["value"] is None and st["deferred"] is True
+
+
+def test_discover_projects_from_transcript_cwd(claude_home, write_transcript,
+                                               tmp_path):
+    proj = tmp_path / "myproj"
+    sk = proj / ".claude" / "skills" / "localskill"
+    sk.mkdir(parents=True)
+    (sk / "SKILL.md").write_text(
+        "---\nname: localskill\ndescription: a local skill\n---\n", encoding="utf-8")
+    write_transcript("P1", ["work here"], cwd=str(proj))
+    projects = inventory.discover_projects()
+    mine = [p for p in projects if p["cwd"] == str(proj)]
+    assert mine and mine[0]["skills"] == ["localskill"]
+    assert mine[0]["has_mcp_json"] is False
+```
+
+`brain/tests/test_context_report.py`:
+```python
+from skills_companion import context_report
+
+
+def test_report_has_all_rows_and_total(claude_home):
+    rep = context_report.report()
+    keys = {r["key"] for r in rep["rows"]}
+    assert {"personal_skills", "plugins", "agents", "mcp",
+            "claude_md", "memory_md", "hooks"} <= keys
+    assert rep["total_estimate"] > 0
+    assert rep["tool_search"]["deferred"] is True
+
+
+def test_report_counts_only_loaded_skills(claude_home):
+    rep = context_report.report()
+    row = next(r for r in rep["rows"] if r["key"] == "personal_skills")
+    assert row["tokens"] > 0            # domain-modeling is loaded
+    assert row["controllable"] is True
+    mcp = next(r for r in rep["rows"] if r["key"] == "mcp")
+    assert mcp["tokens"] == 250         # 1 server × deferred heuristic
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python3 -m pytest tests/test_inventory.py tests/test_context_report.py tests/test_paths.py -q`
+Expected: FAIL — missing modules / missing `claude_json_path`
+
+- [ ] **Step 3: Implement**
+
+Append to `brain/skills_companion/paths.py`:
+```python
+def claude_json_path() -> Path:
+    return claude_home().parent / ".claude.json"
+```
+
+`brain/skills_companion/inventory.py`:
+```python
+import json
+from pathlib import Path
+
+from . import paths, stores
+from .scanner import parse_frontmatter
+
+
+def scan_agents():
+    out = []
+    d = paths.claude_home() / "agents"
+    if d.is_dir():
+        for f in sorted(d.glob("*.md")):
+            name, desc = parse_frontmatter(f)
+            out.append({"name": name or f.stem, "desc": desc or "",
+                        "path": str(f), "source": "user"})
+    return out
+
+
+def scan_mcp():
+    cj = stores.read_json(paths.claude_json_path(), {})
+    return [{"name": name, "scope": "user", "config": cfg}
+            for name, cfg in (cj.get("mcpServers") or {}).items()]
+
+
+def discover_projects(max_transcripts=200):
+    seen = []
+    files = sorted(paths.projects_dir().glob("*/*.jsonl"),
+                   key=lambda f: f.stat().st_mtime, reverse=True)[:max_transcripts]
+    for f in files:
+        cwd = None
+        try:
+            with open(f, encoding="utf-8", errors="ignore") as fh:
+                for i, line in enumerate(fh):
+                    if i > 20:
+                        break
+                    try:
+                        d = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if d.get("cwd"):
+                        cwd = d["cwd"]
+                        break
+        except OSError:
+            continue
+        if not cwd or cwd in seen:
+            continue
+        seen.append(cwd)
+    out = []
+    for cwd in seen:
+        p = Path(cwd)
+        skdir = p / ".claude" / "skills"
+        skills = (sorted(x.parent.name for x in skdir.glob("*/SKILL.md"))
+                  if skdir.is_dir() else [])
+        has_settings = ((p / ".claude" / "settings.json").exists()
+                        or (p / ".claude" / "settings.local.json").exists())
+        has_mcp = (p / ".mcp.json").exists()
+        if skills or has_settings or has_mcp:
+            out.append({"cwd": cwd, "skills": skills, "has_mcp_json": has_mcp})
+    return out
+
+
+def tool_search_status():
+    s = stores.read_json(paths.settings_path(), {})
+    val = (s.get("env") or {}).get("ENABLE_TOOL_SEARCH")
+    return {"value": val, "deferred": val in (None, "auto", "true")}
+```
+
+`brain/skills_companion/context_report.py`:
+```python
+from pathlib import Path
+
+from . import inventory, paths, scanner, stores, transcripts
+
+
+def _tok(text):
+    return len(text) // 4 if text else 0
+
+
+def report():
+    items = scanner.scan()["items"]
+    skills_t = sum(_tok(i["desc"]) for i in items
+                   if i["source"] == "personal" and i["state"] == "loaded")
+    plugin_t = sum(_tok(i["desc"]) for i in items
+                   if i["source"] == "plugin" and i["state"] == "enabled")
+    agents = inventory.scan_agents()
+    agents_t = sum(_tok(a["desc"]) + 40 for a in agents)
+    mcp = inventory.scan_mcp()
+    ts = inventory.tool_search_status()
+    per_server = 250 if ts["deferred"] else 1500
+    cm = paths.claude_home() / "CLAUDE.md"
+    cm_t = _tok(cm.read_text(encoding="utf-8", errors="ignore")) if cm.is_file() else 0
+    mem_t = 0
+    sess = transcripts.newest_session()
+    if sess:
+        mem = Path(sess["path"]).parent / "memory" / "MEMORY.md"
+        if mem.is_file():
+            text = mem.read_text(encoding="utf-8", errors="ignore")
+            mem_t = _tok("\n".join(text.splitlines()[:200])[:25_000])
+    s = stores.read_json(paths.settings_path(), {})
+    hooks = [h.get("command", "")
+             for e in s.get("hooks", {}).get("SessionStart", [])
+             for h in e.get("hooks", [])]
+    rows = [
+        {"key": "personal_skills", "label": "개인 스킬 설명(로딩중)",
+         "tokens": skills_t, "controllable": True,
+         "advice": "마법사에서 '수동(/)'으로 전환"},
+        {"key": "plugins", "label": "플러그인 스킬/명령 설명",
+         "tokens": plugin_t, "controllable": True,
+         "advice": "안 쓰는 플러그인 비활성화"},
+        {"key": "agents", "label": f"사용자 에이전트 {len(agents)}개",
+         "tokens": agents_t, "controllable": True,
+         "advice": "보관(archive) 가능 — 복원 지원"},
+        {"key": "mcp",
+         "label": f"MCP 서버 {len(mcp)}개 (지연로딩 {'ON' if ts['deferred'] else 'OFF'})",
+         "tokens": len(mcp) * per_server, "controllable": True,
+         "advice": "지연로딩 켜기 + 미사용 서버 보관"},
+        {"key": "claude_md", "label": "~/.claude/CLAUDE.md", "tokens": cm_t,
+         "controllable": False,
+         "advice": "직접 다듬기 · .claude/rules/ 분할 (앱이 수정하지 않음)"},
+        {"key": "memory_md", "label": "자동 메모리 MEMORY.md(로딩분)",
+         "tokens": mem_t, "controllable": False,
+         "advice": "Claude가 관리 — 앱이 수정하지 않음"},
+        {"key": "hooks", "label": f"SessionStart 훅 {len(hooks)}개",
+         "tokens": None, "controllable": False,
+         "advice": "stdout 출력 훅은 컨텍스트 주입 — 점검 권장", "detail": hooks},
+    ]
+    return {"rows": rows,
+            "total_estimate": sum(r["tokens"] or 0 for r in rows),
+            "tool_search": ts}
+```
+
+- [ ] **Step 4: Run full suite**
+
+Run: `python3 -m pytest -q`
+Expected: `44 passed` (37 + paths 1 + inventory 4 + report 2)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add brain
+git commit -m "feat(brain): inventory (agents/MCP/projects/tool-search) + context report"
+```
+
+---
+
+### Task 17: Lightweighter ops (brain)
+
+**Files:**
+- Create: `brain/skills_companion/lightweight.py`, `brain/tests/test_lightweight.py`
+
+**Interfaces:**
+- Consumes: `paths`, `stores`, `subprocess.run` (injectable `runner=` for tests).
+- Produces: `silence_skills(names, mode="user-invocable-only")`, `unsilence_skills(names)`,
+  `set_tool_search(value)` (validates `auto|true|false`), `archive_agent(filename)`,
+  `restore_agent(filename)`, `stash_mcp(name, runner=subprocess.run)`,
+  `restore_mcp(name, runner=subprocess.run)`, `migrate_skill(project_dir, name)`.
+  All return `{"ok": bool, ...}`; every settings write uses `backup=True`.
+
+- [ ] **Step 1: Write the failing test**
+
+`brain/tests/test_lightweight.py`:
+```python
+from skills_companion import lightweight, paths, stores
+
+
+def test_silence_and_unsilence(claude_home):
+    r = lightweight.silence_skills(["domain-modeling"])
+    assert r["ok"] and r["count"] == 1
+    s = stores.read_json(paths.settings_path(), {})
+    assert s["skillOverrides"]["domain-modeling"] == "user-invocable-only"
+    lightweight.unsilence_skills(["domain-modeling", "patent-en-ko-kipo"])
+    s = stores.read_json(paths.settings_path(), {})
+    assert "domain-modeling" not in s["skillOverrides"]
+    assert "patent-en-ko-kipo" not in s["skillOverrides"]
+    assert list(claude_home.glob("settings.json.bak.*"))
+
+
+def test_set_tool_search_validates(claude_home):
+    assert lightweight.set_tool_search("auto")["ok"]
+    s = stores.read_json(paths.settings_path(), {})
+    assert s["env"]["ENABLE_TOOL_SEARCH"] == "auto"
+    assert lightweight.set_tool_search("banana")["ok"] is False
+
+
+def test_archive_and_restore_agent(claude_home):
+    assert lightweight.archive_agent("oa-analyzer.md")["ok"]
+    assert not (claude_home / "agents" / "oa-analyzer.md").exists()
+    assert (paths.state_dir() / "agents-archived" / "oa-analyzer.md").exists()
+    assert lightweight.restore_agent("oa-analyzer.md")["ok"]
+    assert (claude_home / "agents" / "oa-analyzer.md").exists()
+    assert lightweight.archive_agent("nope.md")["ok"] is False
+
+
+def test_stash_and_restore_mcp_via_cli(claude_home):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    r = lightweight.stash_mcp("exa", runner=fake_run)
+    assert r["ok"]
+    assert calls[0][:4] == ["claude", "mcp", "remove", "exa"]
+    stash = paths.state_dir() / "mcp-stash" / "exa.json"
+    assert stash.exists()
+    r2 = lightweight.restore_mcp("exa", runner=fake_run)
+    assert r2["ok"] and not stash.exists()
+    assert calls[1][:4] == ["claude", "mcp", "add-json", "exa"]
+    assert lightweight.stash_mcp("ghost", runner=fake_run)["ok"] is False
+
+
+def test_migrate_skill_and_collision(claude_home, tmp_path):
+    proj = tmp_path / "p2"
+    src = proj / ".claude" / "skills" / "movee"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text(
+        "---\nname: movee\ndescription: d\n---\n", encoding="utf-8")
+    r = lightweight.migrate_skill(str(proj), "movee")
+    assert r["ok"]
+    assert (claude_home / "skills" / "movee" / "SKILL.md").exists()
+    assert not src.exists()
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("x", encoding="utf-8")
+    r2 = lightweight.migrate_skill(str(proj), "movee")
+    assert r2["ok"] is False and "collision" in r2["error"]
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `python3 -m pytest tests/test_lightweight.py -q`
+Expected: FAIL — `No module named 'skills_companion.lightweight'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+`brain/skills_companion/lightweight.py`:
+```python
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+from . import paths, stores
+
+VALID_TOOL_SEARCH = ("auto", "true", "false")
+
+
+def _settings():
+    return stores.read_json(paths.settings_path(), None)
+
+
+def _write(settings):
+    stores.atomic_write_json(paths.settings_path(), settings, backup=True)
+
+
+def silence_skills(names, mode="user-invocable-only"):
+    s = _settings()
+    if s is None:
+        return {"ok": False, "error": "settings-not-found"}
+    so = s.setdefault("skillOverrides", {})
+    for n in names:
+        so[n] = mode
+    _write(s)
+    return {"ok": True, "count": len(names)}
+
+
+def unsilence_skills(names):
+    s = _settings()
+    if s is None:
+        return {"ok": False, "error": "settings-not-found"}
+    so = s.get("skillOverrides", {})
+    for n in names:
+        so.pop(n, None)
+    _write(s)
+    return {"ok": True}
+
+
+def set_tool_search(value):
+    if value not in VALID_TOOL_SEARCH:
+        return {"ok": False, "error": f"invalid-value: {value}"}
+    s = _settings()
+    if s is None:
+        return {"ok": False, "error": "settings-not-found"}
+    s.setdefault("env", {})["ENABLE_TOOL_SEARCH"] = value
+    _write(s)
+    return {"ok": True}
+
+
+def _archive_dir():
+    p = paths.state_dir() / "agents-archived"
+    p.mkdir(exist_ok=True)
+    return p
+
+
+def archive_agent(filename):
+    src = paths.claude_home() / "agents" / filename
+    if not src.is_file():
+        return {"ok": False, "error": f"not-found: {filename}"}
+    shutil.move(str(src), str(_archive_dir() / filename))
+    return {"ok": True}
+
+
+def restore_agent(filename):
+    src = _archive_dir() / filename
+    if not src.is_file():
+        return {"ok": False, "error": f"not-archived: {filename}"}
+    dst = paths.claude_home() / "agents"
+    dst.mkdir(exist_ok=True)
+    shutil.move(str(src), str(dst / filename))
+    return {"ok": True}
+
+
+def _stash_dir():
+    p = paths.state_dir() / "mcp-stash"
+    p.mkdir(exist_ok=True)
+    return p
+
+
+def stash_mcp(name, runner=subprocess.run):
+    cj = stores.read_json(paths.claude_json_path(), {})
+    cfg = (cj.get("mcpServers") or {}).get(name)
+    if cfg is None:
+        return {"ok": False, "error": f"unknown-server: {name}"}
+    stores.atomic_write_json(_stash_dir() / f"{name}.json", cfg)
+    r = runner(["claude", "mcp", "remove", name, "-s", "user"],
+               capture_output=True, text=True)
+    if r.returncode != 0:
+        return {"ok": False,
+                "error": f"claude-mcp-remove-failed: {getattr(r, 'stderr', '')}"}
+    return {"ok": True}
+
+
+def restore_mcp(name, runner=subprocess.run):
+    f = _stash_dir() / f"{name}.json"
+    cfg = stores.read_json(f, None)
+    if cfg is None:
+        return {"ok": False, "error": f"not-stashed: {name}"}
+    r = runner(["claude", "mcp", "add-json", name, json.dumps(cfg), "-s", "user"],
+               capture_output=True, text=True)
+    if r.returncode != 0:
+        return {"ok": False,
+                "error": f"claude-mcp-add-failed: {getattr(r, 'stderr', '')}"}
+    f.unlink()
+    return {"ok": True}
+
+
+def migrate_skill(project_dir, name):
+    src = Path(project_dir) / ".claude" / "skills" / name
+    dst = paths.skills_dir() / name
+    if not src.is_dir():
+        return {"ok": False, "error": f"not-found: {src}"}
+    if dst.exists():
+        return {"ok": False, "error": f"name-collision: {name}"}
+    paths.skills_dir().mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    return {"ok": True, "moved_to": str(dst)}
+```
+
+- [ ] **Step 4: Run full suite**
+
+Run: `python3 -m pytest -q`
+Expected: `49 passed` (44 + 5)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add brain
+git commit -m "feat(brain): lightweighter — bulk silence, tool-search, agent archive, MCP stash, skill migration"
+```
+
+---
+
+### Task 18: CLI verbs for wizard + first-run flag
+
+**Files:**
+- Modify: `brain/skills_companion/cli.py`, `brain/skills_companion/stores.py` (DEFAULT_CONFIG), `brain/tests/test_cli.py` (append tests)
+
+**Interfaces:**
+- Consumes: Tasks 16–17 modules.
+- Produces CLI verbs: `inventory`, `context-report`,
+  `lightweight --json '{"silence":[...],"unsilence":[...],"tool_search":"auto"}'`,
+  `archive-agent --file F`, `restore-agent --file F`, `stash-mcp --name N`,
+  `restore-mcp --name N`, `migrate-skill --project DIR --name NAME`.
+  `stores.DEFAULT_CONFIG` gains `"wizard_completed": False`.
+
+- [ ] **Step 1: Append failing tests to `brain/tests/test_cli.py`**
+
+```python
+def test_cli_inventory_and_report(claude_home, capsys):
+    inv = _run(capsys, ["inventory"])
+    assert inv["agents"][0]["name"] == "oa-analyzer"
+    assert inv["mcp"][0]["name"] == "exa"
+    assert inv["tool_search"]["deferred"] is True
+    rep = _run(capsys, ["context-report"])
+    assert rep["total_estimate"] > 0
+
+
+def test_cli_lightweight_bundle(claude_home, capsys):
+    out = _run(capsys, ["lightweight", "--json",
+                        '{"silence": ["domain-modeling"], "tool_search": "auto"}'])
+    assert out["ok"] is True
+    from skills_companion import paths, stores
+    s = stores.read_json(paths.settings_path(), {})
+    assert s["skillOverrides"]["domain-modeling"] == "user-invocable-only"
+    assert s["env"]["ENABLE_TOOL_SEARCH"] == "auto"
+
+
+def test_cli_wizard_flag_default(claude_home, capsys):
+    cfg = _run(capsys, ["config-get"])
+    assert cfg["wizard_completed"] is False
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `python3 -m pytest tests/test_cli.py -q`
+Expected: FAIL — argparse `invalid choice: 'inventory'`
+
+- [ ] **Step 3: Implement**
+
+In `stores.py`, add to `DEFAULT_CONFIG`:
+```python
+    "wizard_completed": False,
+```
+
+In `cli.py`, extend imports:
+```python
+from . import (activation, context_report, inventory, lightweight, paths,
+               recommender, revert, scanner, stores, transcripts)
+```
+Add subparsers (after `config-set`):
+```python
+    sub.add_parser("inventory")
+    sub.add_parser("context-report")
+    p = sub.add_parser("lightweight")
+    p.add_argument("--json", required=True)
+    p = sub.add_parser("archive-agent")
+    p.add_argument("--file", required=True)
+    p = sub.add_parser("restore-agent")
+    p.add_argument("--file", required=True)
+    p = sub.add_parser("stash-mcp")
+    p.add_argument("--name", required=True)
+    p = sub.add_parser("restore-mcp")
+    p.add_argument("--name", required=True)
+    p = sub.add_parser("migrate-skill")
+    p.add_argument("--project", required=True)
+    p.add_argument("--name", required=True)
+```
+Add dispatch branches (before the final `print`):
+```python
+    elif args.cmd == "inventory":
+        out = {"agents": inventory.scan_agents(), "mcp": inventory.scan_mcp(),
+               "projects": inventory.discover_projects(),
+               "tool_search": inventory.tool_search_status()}
+    elif args.cmd == "context-report":
+        out = context_report.report()
+    elif args.cmd == "lightweight":
+        spec = json.loads(getattr(args, "json"))
+        results = {}
+        if spec.get("silence"):
+            results["silence"] = lightweight.silence_skills(spec["silence"])
+        if spec.get("unsilence"):
+            results["unsilence"] = lightweight.unsilence_skills(spec["unsilence"])
+        if spec.get("tool_search"):
+            results["tool_search"] = lightweight.set_tool_search(spec["tool_search"])
+        out = {"ok": all(r.get("ok") for r in results.values()) if results else True,
+               "results": results}
+    elif args.cmd == "archive-agent":
+        out = lightweight.archive_agent(args.file)
+    elif args.cmd == "restore-agent":
+        out = lightweight.restore_agent(args.file)
+    elif args.cmd == "stash-mcp":
+        out = lightweight.stash_mcp(args.name)
+    elif args.cmd == "restore-mcp":
+        out = lightweight.restore_mcp(args.name)
+    elif args.cmd == "migrate-skill":
+        out = lightweight.migrate_skill(args.project, args.name)
+```
+
+- [ ] **Step 4: Run full suite**
+
+Run: `python3 -m pytest -q`
+Expected: `52 passed` (49 + 3)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add brain
+git commit -m "feat(brain): CLI verbs for wizard — inventory/report/lightweight/stash/archive/migrate"
+```
+
+---
+
+### Task 19: Wizard UI (wizard.html) + disable-plugin verb
+
+**Files:**
+- Create: `shell/ui/wizard.html`
+- Modify: `brain/skills_companion/cli.py` (add `disable-plugin`), `brain/tests/test_cli.py` (append test)
+
+**Interfaces:**
+- Consumes: brain verbs `scan`, `inventory`, `context-report`, `lightweight`,
+  `stash-mcp`, `archive-agent`, `migrate-skill`, `config-set`; invoke commands
+  `brain`, `notify`.
+- Produces: single scrollable wizard page; on 적용 it applies all selections
+  sequentially, sets `wizard_completed: true`, and shows the after-report.
+
+- [ ] **Step 1: Write the wizard**
+
+`shell/ui/wizard.html`:
+```html
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>경량화 마법사</title>
+<style>
+body{margin:0;padding:18px;background:#f7f7f8;color:#1a1a1a;
+font:14px/1.5 -apple-system,"Pretendard","Apple SD Gothic Neo",sans-serif}
+@media(prefers-color-scheme:dark){body{background:#0f1115;color:#e6e6e8}}
+section{border:1px solid #8884;border-radius:10px;padding:12px;margin:10px 0}
+h3{margin:0 0 6px;font-size:14px}
+.hint{font-size:12px;opacity:.7;margin:2px 0 8px}
+.row{display:flex;gap:8px;align-items:center;padding:2px 0}
+code{font:12.5px ui-monospace,Menlo,monospace;color:#2563eb}
+details>summary{cursor:pointer;font-weight:600}
+button{border:1px solid #8884;background:transparent;color:inherit;
+border-radius:8px;padding:8px 16px;cursor:pointer}
+button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+.total{font-weight:700}
+#done{display:none}
+</style></head><body>
+<h2>🪶 경량화 마법사</h2>
+<p class="hint">세션 시작 컨텍스트를 줄입니다. 모든 변경은 백업되며 앱에서 되돌릴 수 있어요.
+현재 추정: <span id="before" class="total">…</span> 토큰</p>
+
+<div id="steps">
+<section><h3>① 개인 스킬 → 수동(/) 전환</h3>
+<p class="hint">체크된 스킬은 컨텍스트에서 숨겨지고 <code>/이름</code>으로만 호출됩니다.
+<b>Claude가 알아서 발동해야 하는 스킬만 체크를 해제하세요.</b></p>
+<div id="skills"></div></section>
+
+<section><h3>② 플러그인 비활성화 (선택)</h3>
+<p class="hint">체크한 플러그인을 끕니다. 나중에 추천/카탈로그에서 다시 켤 수 있어요.</p>
+<div id="plugins"></div></section>
+
+<section><h3>③ MCP 지연로딩</h3><div id="toolsearch"></div></section>
+
+<section><details><summary>④ 고급 — MCP 서버 보관 · 에이전트 보관</summary>
+<p class="hint">보관 = 설정을 앱에 저장한 뒤 제거. 언제든 복원 가능합니다.</p>
+<div id="mcp"></div><div id="agents"></div></details></section>
+
+<section><h3>⑤ 프로젝트 스킬 → 전역 이동 (선택)</h3><div id="projects"></div></section>
+
+<div style="display:flex;justify-content:flex-end;gap:8px">
+<button id="skip">나중에</button>
+<button id="apply" class="primary">적용</button></div>
+</div>
+
+<div id="done"><h3>✅ 적용 완료</h3><div id="after"></div>
+<button onclick="window.close()">닫기</button></div>
+
+<script>
+const inv = (c, a) => window.__TAURI__.core.invoke(c, a);
+const brain = (...args) => inv("brain", { args });
+let cat = [], inventory = {}, personalNames = new Set();
+
+function esc(s){ return String(s).replace(/"/g, "&quot;"); }
+
+async function load() {
+  const [scan, invres, rep] = await Promise.all(
+    [brain("scan"), brain("inventory"), brain("context-report")]);
+  cat = scan.items; inventory = invres;
+  document.getElementById("before").textContent = rep.total_estimate;
+  const loaded = cat.filter(i => i.source === "personal" && i.state === "loaded");
+  personalNames = new Set(cat.filter(i => i.source === "personal")
+                             .map(i => i.invoke.slice(1)));
+  document.getElementById("skills").innerHTML = loaded.length
+    ? loaded.map(i => `<label class="row"><input type="checkbox" class="sk"
+        value="${esc(i.invoke.slice(1))}" checked> <code>${i.invoke}</code>
+        <span class="hint">${esc((i.desc||"").slice(0,90))}</span></label>`).join("")
+    : "<i>이미 모두 수동 상태입니다.</i>";
+  const plugkeys = [...new Set(cat.filter(i => i.source === "plugin"
+      && i.state === "enabled").map(i => i.plugin))];
+  document.getElementById("plugins").innerHTML = plugkeys.map(k =>
+    `<label class="row"><input type="checkbox" class="pl" value="${esc(k)}">
+     <code>${esc(k)}</code></label>`).join("") || "<i>활성 플러그인 없음</i>";
+  const ts = invres.tool_search;
+  document.getElementById("toolsearch").innerHTML = ts.deferred
+    ? `<p>✅ 지연로딩 활성 (현재: <code>${ts.value ?? "auto(기본)"}</code>) — 조치 불필요</p>`
+    : `<p>⚠️ <code>ENABLE_TOOL_SEARCH=false</code> — MCP 스키마 전체가 시작 시 로딩 중.
+       <label><input type="checkbox" id="fixts" checked> <b>auto로 전환 (강력 추천)</b></label></p>`;
+  document.getElementById("mcp").innerHTML = "<b>MCP 서버(user)</b>: " +
+    (invres.mcp.map(m => `<label class="row"><input type="checkbox" class="mc"
+      value="${esc(m.name)}"> 보관: <code>${esc(m.name)}</code></label>`).join("")
+      || "<i>없음</i>");
+  document.getElementById("agents").innerHTML = "<b>에이전트</b>: " +
+    (invres.agents.map(a => `<label class="row"><input type="checkbox" class="ag"
+      value="${esc(a.path.split("/").pop())}"> 보관: <code>${esc(a.name)}</code></label>`)
+      .join("") || "<i>없음</i>");
+  document.getElementById("projects").innerHTML = invres.projects.map(p =>
+    `<div><b>${esc(p.cwd)}</b>${p.has_mcp_json ?
+       ' <span class="hint">(.mcp.json 있음 — 읽기전용)</span>' : ""}<br>` +
+    p.skills.map(s => personalNames.has(s)
+      ? `<label class="row"><input type="checkbox" disabled> <code>/${esc(s)}</code>
+         <span class="hint">전역에 동명 스킬 존재 — 이동 불가</span></label>`
+      : `<label class="row"><input type="checkbox" class="mig"
+         data-proj="${esc(p.cwd)}" value="${esc(s)}"> 전역으로 이동:
+         <code>/${esc(s)}</code></label>`).join("") + "</div>").join("")
+    || "<i>스킬을 가진 로컬 프로젝트가 발견되지 않았습니다.</i>";
+}
+
+const vals = cls => [...document.querySelectorAll("input." + cls + ":checked")]
+  .map(x => x.value);
+
+async function apply() {
+  const lw = { silence: vals("sk") };
+  const fixts = document.getElementById("fixts");
+  if (fixts && fixts.checked) lw.tool_search = "auto";
+  await brain("lightweight", "--json", JSON.stringify(lw));
+  for (const k of vals("pl")) await brain("disable-plugin", "--plugin", k);
+  for (const n of vals("mc")) await brain("stash-mcp", "--name", n);
+  for (const f of vals("ag")) await brain("archive-agent", "--file", f);
+  for (const el of document.querySelectorAll("input.mig:checked"))
+    await brain("migrate-skill", "--project", el.dataset.proj, "--name", el.value);
+  await brain("config-set", "--json", '{"wizard_completed": true}');
+  const rep = await brain("context-report");
+  document.getElementById("steps").style.display = "none";
+  document.getElementById("done").style.display = "block";
+  document.getElementById("after").innerHTML =
+    `적용 후 추정: <span class="total">${rep.total_estimate}</span> 토큰`;
+  inv("notify", { title: "경량화 완료",
+    body: "새 Claude 세션부터 적용됩니다." });
+}
+document.getElementById("apply").onclick = apply;
+document.getElementById("skip").onclick = async () => {
+  await brain("config-set", "--json", '{"wizard_completed": true}');
+  window.close();
+};
+load();
+</script></body></html>
+```
+
+The wizard's plugin step needs one more brain verb, `disable-plugin` (mirrors
+`activation.deactivate`) — add it in this task. In `cli.py` add the subparser:
+```python
+    p = sub.add_parser("disable-plugin")
+    p.add_argument("--plugin", required=True)
+```
+and the dispatch branch:
+```python
+    elif args.cmd == "disable-plugin":
+        out = activation.deactivate(args.plugin)
+```
+Append a CLI test to `brain/tests/test_cli.py`:
+```python
+def test_cli_disable_plugin(claude_home, capsys):
+    out = _run(capsys, ["disable-plugin", "--plugin",
+                        "korean-law@korean-law-marketplace"])
+    assert out["ok"] is True
+```
+
+- [ ] **Step 2: Run brain suite**
+
+Run: `python3 -m pytest -q`
+Expected: `53 passed` (52 + disable-plugin)
+
+- [ ] **Step 3: Manual verify**
+
+`cargo tauri dev` → open `wizard.html` window manually (temporarily set
+`wizard_completed` false: `python3 -m skills_companion.cli config-set --json
+'{"wizard_completed": false}'`, restart dev). Walk all five steps against real
+data, but **click 적용 only with disposable selections** (e.g. silence one test
+skill), verify settings backup + wizard_completed flips true. Undo via
+`lightweight --json '{"unsilence": [...]}'`.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add shell/ui/wizard.html brain
+git commit -m "feat(ui): lightweighting wizard — skills/plugins/tool-search/advanced/projects"
+```
+
+---
+
+### Task 20: First-run wiring + Context Report panel
+
+**Files:**
+- Modify: `shell/src-tauri/src/main.rs` (add `open_wizard` command + first-run check), `shell/ui/index.html` (context report section + wizard button)
+
+**Interfaces:**
+- Consumes: `config-get` (`wizard_completed`), `context-report`.
+- Produces: wizard auto-opens on first run; main window gains a 컨텍스트 리포트 table and a "마법사 다시 실행" button.
+
+- [ ] **Step 1: Rust — open_wizard + first-run**
+
+Add to `main.rs`:
+```rust
+#[tauri::command]
+fn open_wizard(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("wizard") {
+        let _ = w.show();
+        let _ = w.set_focus();
+        return;
+    }
+    let _ = WebviewWindowBuilder::new(&app, "wizard",
+            WebviewUrl::App("wizard.html".into()))
+        .title("경량화 마법사 — Skills Companion")
+        .inner_size(760.0, 680.0)
+        .build();
+}
+```
+Register it: `tauri::generate_handler![brain, copy_text, notify, autotype_reload, open_wizard]`.
+In `setup`, after the poll thread spawn:
+```rust
+            let h2 = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Ok(c) = run_brain(&["config-get"]) {
+                    if c["wizard_completed"] == false {
+                        open_wizard(h2);
+                    }
+                }
+            });
+```
+
+- [ ] **Step 2: index.html — report panel + button**
+
+In `index.html`, inside `#settings` after the per-plugin table, add:
+```html
+<div id="report" style="margin-top:12px">
+  <b>📊 컨텍스트 리포트 (추정)</b>
+  <button data-act="wizard" style="margin-left:8px">마법사 다시 실행</button>
+  <table id="reportTable" style="width:100%;border-collapse:collapse;font-size:12.5px"></table>
+</div>
+```
+In the script, add to `load()`: `loadReport();` and:
+```javascript
+async function loadReport() {
+  const rep = await brain("context-report");
+  document.getElementById("reportTable").innerHTML =
+    rep.rows.map(r => `<tr><td style="padding:3px 6px;border-top:1px solid var(--line)">
+      ${r.controllable ? "🎛" : "📎"} ${r.label}</td>
+      <td style="text-align:right">${r.tokens ?? "—"}</td>
+      <td style="color:var(--muted)">${r.advice}</td></tr>`).join("") +
+    `<tr><td style="padding:3px 6px"><b>합계(추정)</b></td>
+     <td style="text-align:right"><b>${rep.total_estimate}</b></td><td></td></tr>`;
+}
+```
+And extend the click handler:
+```javascript
+  else if (b.dataset.act === "wizard") inv("open_wizard");
+```
+
+- [ ] **Step 3: Build + manual verify**
+
+`cargo build` → `Finished`. `cargo tauri dev`: report table renders with real
+numbers; 마법사 다시 실행 opens the wizard; fresh config (`wizard_completed:false`)
+auto-opens it at launch.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add shell
+git commit -m "feat(shell): first-run wizard launch + context report panel"
+```
+
+---
+
 ## Self-Review Notes (performed)
 
-- **Spec coverage:** §5 architecture→T10–11; §6 components 1–8→T4,T6,T5/T11,T7,T8,T12–13,T14,T2; §8 engine→T6; §9 flows→T7/T11 (activate), T8/T13 (end/ask), T8/T11 (sweep); §10 edge cases→tests in T7 (unknown/already-enabled/unrelated keys), T8 (guard/idempotent/no-entries); §12 migration→T15; §13 packaging→T15. Windows packaging, agents, un-silencing: out of scope per spec §4.
-- **Type consistency:** ledger/config/CatalogItem/Recommendation shapes identical across T2/T4/T6/T9/T12; plugin key format `name@marketplace` everywhere; CLI verbs match shell callers (T11–13 call only verbs defined in T9/T14).
-- **Known drift risk (explicit):** Tauri v2 Rust API names in T10–11 may need compiler-guided renames; the JSON contracts with the brain are the stable interface.
+- **Spec coverage:** §5 architecture→T10–11; §6 components 1–8→T4,T6,T5/T11,T7,T8,T12–13,T14,T2 and 9–12→T16 (Inventory, Context Reporter), T17–18 (Lightweighter), T19–20 (Wizard UI + first-run); §8 engine→T6; §9 flows→T7/T11 (activate), T8/T13 (end/ask), T8/T11 (sweep), wizard flow→T19–20; §10 edge cases→tests in T7 (unknown/already-enabled/unrelated keys), T8 (guard/idempotent/no-entries), T17 (collision, unknown-server, invalid tool-search, missing agent); §12 migration→T15; §13 packaging→T15. Windows packaging, agent recommendations, session-scoped skill changes: out of scope per spec §4.
+- **Type consistency:** ledger/config/CatalogItem/Recommendation shapes identical across T2/T4/T6/T9/T12; plugin key format `name@marketplace` everywhere (incl. `disable-plugin`/wizard); CLI verbs match shell callers (T11–13/T19–20 call only verbs defined in T9/T14/T18/T19); inventory/report row keys in T16 match wizard/report consumers in T19–20.
+- **Constraint compliance (C9–C13):** T17 writes only `~/.claude/settings.json` (backup) and app state; `~/.claude.json` is read-only (stash reads it, mutates via `claude mcp` CLI); CLAUDE.md/MEMORY.md measured only (T16); project plugins never touched; projects discovered via transcript cwd (T16).
+- **Known drift risk (explicit):** Tauri v2 Rust API names in T10–11/T20 may need compiler-guided renames; the JSON contracts with the brain are the stable interface. `claude mcp remove/add-json` flags (T17) should be verified once against `claude mcp --help` during execution.
