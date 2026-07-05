@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import shutil
@@ -34,7 +35,7 @@ def atomic_write_json(path, data, backup=False):
 
 
 def load_config():
-    cfg = dict(DEFAULT_CONFIG)
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
     cfg.update(read_json(paths.config_path(), {}))
     cfg.setdefault("per_plugin", {})
     return cfg
