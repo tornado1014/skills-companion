@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>세션 정리</title>
+<style>
+body{margin:0;padding:16px;background:#f7f7f8;color:#1a1a1a;
+font:14px/1.5 -apple-system,"Pretendard","Apple SD Gothic Neo",sans-serif}
+@media(prefers-color-scheme:dark){body{background:#0f1115;color:#e6e6e8}}
+.item{border:1px solid #8884;border-radius:9px;padding:9px 11px;margin:8px 0}
+code{font:12.5px ui-monospace,Menlo,monospace;color:#2563eb;font-weight:600}
+label{margin-right:10px}
+.remember{font-size:12px;opacity:.8;display:block;margin-top:4px}
+.actions{margin-top:14px;display:flex;gap:8px;justify-content:flex-end}
+button{border:1px solid #8884;background:transparent;color:inherit;border-radius:8px;
+padding:7px 14px;cursor:pointer}
+button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+#err{color:#dc2626;padding:6px 0;font-size:12.5px;display:none}
+</style></head><body>
+<div id="err"></div>
+<h3>세션이 끝났어요 — 이 세션에서 켠 플러그인을 어떻게 할까요?</h3>
+<div id="items">로딩…</div>
+<div class="actions">
+  <button id="keepAll" data-action="keep">모두 유지</button>
+  <button id="revertAll" class="primary" data-action="revert">모두 되돌림</button>
+  <button id="apply" data-action="apply">선택 적용</button>
+</div>
+<script>
+const inv = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+const brain = (...args) => inv("brain", { args });
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function clearErr() {
+  const el = document.getElementById("err");
+  el.innerHTML = "";
+  el.style.display = "none";
+}
+
+async function brainSafe(...args) {
+  try {
+    const r = await brain(...args);
+    clearErr();
+    return r;
+  } catch (e) {
+    const el = document.getElementById("err");
+    el.innerHTML = "브레인 호출 실패: " + esc(String(e));
+    el.style.display = "block";
+    return null;
+  }
+}
+
+const sid = esc(new URLSearchParams(location.search).get("session"));
+let plugins = [];
+
+async function load() {
+  const r = await brainSafe("session-end", "--session", sid);
+  if (!r) return;
+  plugins = r.ask || [];
+  if (!plugins.length) { window.close(); return; }
+  document.getElementById("items").innerHTML = plugins.map((p, i) => `
+    <div class="item"><code>${esc(p)}</code><br>
+      <label><input type="radio" name="a${i}" value="revert" checked> 되돌림(끄기)</label>
+      <label><input type="radio" name="a${i}" value="keep"> 유지</label>
+      <label class="remember"><input type="checkbox" id="rem${i}">
+        이 플러그인은 앞으로 항상 이렇게 (기억)</label>
+    </div>`).join("");
+}
+
+async function apply(force) {
+  const decisions = plugins.map((p, i) => ({
+    plugin: p,
+    action: force || document.querySelector(`input[name=a${i}]:checked`).value,
+    remember: document.getElementById(`rem${i}`).checked,
+  }));
+  const r = await brainSafe("apply-decisions", "--session", sid,
+              "--decisions", JSON.stringify(decisions));
+  if (r) window.close();
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.action === "apply") apply(null);
+  else if (b.dataset.action === "revert") apply("revert");
+  else if (b.dataset.action === "keep") apply("keep");
+});
+
+load();
+</script></body></html>
