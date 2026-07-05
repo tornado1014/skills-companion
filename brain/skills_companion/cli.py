@@ -42,6 +42,10 @@ def main(argv=None):
     sub.add_parser("config-get")
     p = sub.add_parser("config-set")
     p.add_argument("--json", required=True)
+    p = sub.add_parser("install-hooks")
+    p.add_argument("--script", required=True)
+    p = sub.add_parser("uninstall-hooks")
+    p.add_argument("--script", required=True)
     args = ap.parse_args(argv)
 
     if args.cmd == "scan":
@@ -70,6 +74,12 @@ def main(argv=None):
         cfg.update(json.loads(getattr(args, "json")))
         stores.save_config(cfg)
         out = cfg
+    elif args.cmd == "install-hooks":
+        from . import installer
+        out = installer.install_hooks(args.script)
+    elif args.cmd == "uninstall-hooks":
+        from . import installer
+        out = installer.uninstall_hooks(args.script)
     print(json.dumps(out, ensure_ascii=False))
     return 0
 
