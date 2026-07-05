@@ -64,6 +64,20 @@ def test_concurrency_guard(claude_home, write_transcript):
     assert "S2" in stores.load_ledger()
 
 
+def test_apply_decisions_concurrency_guard(claude_home, write_transcript):
+    activation.activate(UA, session_id="S1")
+    activation.activate(UA, session_id="S2")          # already-enabled, ledger-tracked
+    write_transcript("S2", ["still working"], mtime=time.time())  # S2 live
+    sig = _signal("S1")
+    out = revert.apply_decisions(
+        "S1", [{"plugin": UA, "action": "revert", "remember": False}])
+    assert out["kept"] == [UA] and out["reverted"] == []
+    assert _enabled(claude_home, UA) is True          # guarded, not reverted
+    assert "S1" not in stores.load_ledger()
+    assert UA in {e["plugin"] for e in stores.load_ledger()["S2"]}
+    assert not sig.exists()
+
+
 def test_apply_decisions_with_remember(claude_home):
     activation.activate(UA, session_id="S1")
     sig = _signal("S1")

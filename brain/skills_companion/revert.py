@@ -45,19 +45,28 @@ def on_session_end(session_id, reason="other"):
 
 def apply_decisions(session_id, decisions):
     cfg = stores.load_config()
+    ledger = stores.load_ledger()
+    live = transcripts.live_sessions(exclude=session_id)
+    held = set()
+    for sid, es in ledger.items():
+        if sid in live:
+            held |= {e["plugin"] for e in es}
     out = {"reverted": [], "kept": []}
+    remembered = False
     for d in decisions:
         p = d["plugin"]
-        if d.get("action") == "revert":
+        if d.get("action") == "revert" and p not in held:
             activation.deactivate(p)
             out["reverted"].append(p)
         else:
             out["kept"].append(p)
         stores.ledger_remove(session_id, p)
         if d.get("remember"):
+            remembered = True
             cfg["per_plugin"][p] = (
                 "auto-revert" if d.get("action") == "revert" else "keep")
-    stores.save_config(cfg)
+    if remembered:
+        stores.save_config(cfg)
     if session_id not in stores.load_ledger():
         _signal_path(session_id).unlink(missing_ok=True)
     return out
