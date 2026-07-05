@@ -35,7 +35,7 @@ fn run_brain(args: &[&str]) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn brain(args: Vec<String>) -> Result<Value, String> {
+async fn brain(args: Vec<String>) -> Result<Value, String> {
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     run_brain(&refs)
 }
@@ -91,18 +91,28 @@ fn open_revert(app: &AppHandle, session: &str) {
 
 fn activate_flow(app: &AppHandle, plugin: &str, invoke_label: &str) {
     match run_brain(&["activate", "--plugin", plugin]) {
-        Ok(_) => {
-            let _ = app.clipboard().write_text("/reload-plugins".to_string());
-            let typed = autotype_reload();
-            let body = if typed {
-                format!("{invoke_label} 활성화 — /reload-plugins 자동 입력됨")
+        Ok(v) => {
+            if v["ok"] == true {
+                let _ = app.clipboard().write_text("/reload-plugins".to_string());
+                let typed = autotype_reload();
+                let body = if typed {
+                    format!("{invoke_label} 활성화 — /reload-plugins 자동 입력됨")
+                } else {
+                    format!("{invoke_label} 활성화 — /reload-plugins 를 세션에 붙여넣으세요 (복사됨)")
+                };
+                let _ = app.notification().builder()
+                    .title("플러그인 활성화됨").body(body).show();
             } else {
-                format!("{invoke_label} 활성화 — /reload-plugins 를 세션에 붙여넣으세요 (복사됨)")
-            };
-            let _ = app.notification().builder()
-                .title("플러그인 활성화됨").body(body).show();
+                let error = v["error"].as_str().unwrap_or("알 수 없는 오류").to_string();
+                eprintln!("activate_flow: brain reported ok:false — {error}");
+                let _ = app.notification().builder()
+                    .title("활성화 실패")
+                    .body(format!("활성화 실패: {error}"))
+                    .show();
+            }
         }
         Err(e) => {
+            eprintln!("activate_flow: run_brain error — {e}");
             let _ = app.notification().builder()
                 .title("활성화 실패").body(e).show();
         }
@@ -110,7 +120,10 @@ fn activate_flow(app: &AppHandle, plugin: &str, invoke_label: &str) {
 }
 
 fn handle_rec_click(app: &AppHandle, idx: usize) {
-    let recs = app.state::<RecState>().0.lock().unwrap().clone();
+    let recs = match app.state::<RecState>().0.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
     let Some(r) = recs.get(idx) else { return };
     let invoke = r["item"]["invoke"].as_str().unwrap_or("").to_string();
     if r["kind"] == "actionable" {
@@ -124,8 +137,11 @@ fn handle_rec_click(app: &AppHandle, idx: usize) {
     }
 }
 
-fn rebuild_tray(app: &AppHandle, recs: &[Value]) {
-    *app.state::<RecState>().0.lock().unwrap() = recs.to_vec();
+fn rebuild_tray(app: &AppHandle, recs: &[Value]) -> tauri::Result<()> {
+    match app.state::<RecState>().0.lock() {
+        Ok(mut guard) => *guard = recs.to_vec(),
+        Err(poisoned) => *poisoned.into_inner() = recs.to_vec(),
+    }
     let mut rec_items: Vec<MenuItem<tauri::Wry>> = vec![];
     for (i, r) in recs.iter().take(3).enumerate() {
         let mark = if r["kind"] == "actionable" { "⚡" } else { "💡" };
@@ -136,9 +152,9 @@ fn rebuild_tray(app: &AppHandle, recs: &[Value]) {
         }
     }
     let open_i = MenuItem::with_id(app, "open", "Skills Companion 열기", true,
-                                   None::<&str>).unwrap();
-    let quit_i = MenuItem::with_id(app, "quit", "종료", true, None::<&str>).unwrap();
-    let sep = PredefinedMenuItem::separator(app).unwrap();
+                                   None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+    let sep = PredefinedMenuItem::separator(app)?;
     let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![];
     for mi in &rec_items {
         refs.push(mi);
@@ -146,11 +162,11 @@ fn rebuild_tray(app: &AppHandle, recs: &[Value]) {
     refs.push(&sep);
     refs.push(&open_i);
     refs.push(&quit_i);
-    if let Ok(menu) = Menu::with_items(app, &refs) {
-        if let Some(tray) = app.tray_by_id("main") {
-            let _ = tray.set_menu(Some(menu));
-        }
+    let menu = Menu::with_items(app, &refs)?;
+    if let Some(tray) = app.tray_by_id("main") {
+        tray.set_menu(Some(menu))?;
     }
+    Ok(())
 }
 
 fn poll_once(app: &AppHandle, notified: &mut HashSet<String>) {
@@ -180,7 +196,9 @@ fn poll_once(app: &AppHandle, notified: &mut HashSet<String>) {
         .unwrap_or(false);
     if let Ok(v) = run_brain(&["recommend", "--top", "3"]) {
         let recs = v["recommendations"].as_array().cloned().unwrap_or_default();
-        rebuild_tray(app, &recs);
+        if let Err(e) = rebuild_tray(app, &recs) {
+            eprintln!("rebuild_tray failed: {e}");
+        }
         if notifications_on {
             for r in &recs {
                 if r["kind"] != "actionable" {
