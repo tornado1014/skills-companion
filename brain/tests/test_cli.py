@@ -69,3 +69,9 @@ def test_cli_lightweight_bundle(claude_home, capsys):
 def test_cli_wizard_flag_default(claude_home, capsys):
     cfg = _run(capsys, ["config-get"])
     assert cfg["wizard_completed"] is False
+
+
+def test_cli_disable_plugin(claude_home, capsys):
+    out = _run(capsys, ["disable-plugin", "--plugin",
+                        "korean-law@korean-law-marketplace"])
+    assert out["ok"] is True

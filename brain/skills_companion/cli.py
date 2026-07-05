@@ -58,6 +58,8 @@ def main(argv=None):
     p = sub.add_parser("migrate-skill")
     p.add_argument("--project", required=True)
     p.add_argument("--name", required=True)
+    p = sub.add_parser("disable-plugin")
+    p.add_argument("--plugin", required=True)
     p = sub.add_parser("install-hooks")
     p.add_argument("--script", required=True)
     p = sub.add_parser("uninstall-hooks")
@@ -117,6 +119,8 @@ def main(argv=None):
         out = lightweight.restore_mcp(args.name)
     elif args.cmd == "migrate-skill":
         out = lightweight.migrate_skill(args.project, args.name)
+    elif args.cmd == "disable-plugin":
+        out = activation.deactivate(args.plugin)
     elif args.cmd == "install-hooks":
         from . import installer
         out = installer.install_hooks(args.script)

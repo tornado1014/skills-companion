@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><title>경량화 마법사</title>
+<style>
+body{margin:0;padding:18px;background:#f7f7f8;color:#1a1a1a;
+font:14px/1.5 -apple-system,"Pretendard","Apple SD Gothic Neo",sans-serif}
+@media(prefers-color-scheme:dark){body{background:#0f1115;color:#e6e6e8}}
+section{border:1px solid #8884;border-radius:10px;padding:12px;margin:10px 0}
+h3{margin:0 0 6px;font-size:14px}
+.hint{font-size:12px;opacity:.7;margin:2px 0 8px}
+.row{display:flex;gap:8px;align-items:center;padding:2px 0}
+code{font:12.5px ui-monospace,Menlo,monospace;color:#2563eb}
+details>summary{cursor:pointer;font-weight:600}
+button{border:1px solid #8884;background:transparent;color:inherit;
+border-radius:8px;padding:8px 16px;cursor:pointer}
+button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
+.total{font-weight:700}
+#done{display:none}
+.brain-error{background:#fee;border:1px solid #f88;border-radius:6px;padding:8px;margin:8px 0;color:#c00;font-size:13px}
+</style></head><body>
+<h2>🪶 경량화 마법사</h2>
+<p class="hint">세션 시작 컨텍스트를 줄입니다. 모든 변경은 백업되며 앱에서 되돌릴 수 있어요.
+현재 추정: <span id="before" class="total">…</span> 토큰</p>
+
+<div id="steps">
+<section><h3>① 개인 스킬 → 수동(/) 전환</h3>
+<p class="hint">체크된 스킬은 컨텍스트에서 숨겨지고 <code>/이름</code>으로만 호출됩니다.
+<b>Claude가 알아서 발동해야 하는 스킬만 체크를 해제하세요.</b></p>
+<div id="skills"></div></section>
+
+<section><h3>② 플러그인 비활성화 (선택)</h3>
+<p class="hint">체크한 플러그인을 끕니다. 나중에 추천/카탈로그에서 다시 켤 수 있어요.</p>
+<div id="plugins"></div></section>
+
+<section><h3>③ MCP 지연로딩</h3><div id="toolsearch"></div></section>
+
+<section><details><summary>④ 고급 — MCP 서버 보관 · 에이전트 보관</summary>
+<p class="hint">보관 = 설정을 앱에 저장한 뒤 제거. 언제든 복원 가능합니다.</p>
+<div id="mcp"></div><div id="agents"></div></details></section>
+
+<section><h3>⑤ 프로젝트 스킬 → 전역 이동 (선택)</h3><div id="projects"></div></section>
+
+<div style="display:flex;justify-content:flex-end;gap:8px">
+<button id="skip">나중에</button>
+<button id="apply" class="primary">적용</button></div>
+</div>
+
+<div id="done"><h3>✅ 적용 완료</h3><div id="after"></div>
+<button id="closeBtn">닫기</button></div>
+
+<script>
+const inv = (c, a) => window.__TAURI__.core.invoke(c, a);
+const brain = (...args) => inv("brain", { args });
+let cat = [], inventory = {}, personalNames = new Set();
+
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[c]));
+}
+
+function showBrainError(msg) {
+  const errDiv = document.createElement("div");
+  errDiv.className = "brain-error";
+  errDiv.textContent = "브레인 호출 실패: " + msg;
+  document.getElementById("steps").insertBefore(errDiv, document.getElementById("steps").firstChild);
+}
+
+async function load() {
+  try {
+    const [scan, invres, rep] = await Promise.all(
+      [brain("scan"), brain("inventory"), brain("context-report")]);
+    cat = scan.items;
+    inventory = invres;
+    document.getElementById("before").textContent = rep.total_estimate;
+    const loaded = cat.filter(i => i.source === "personal" && i.state === "loaded");
+    personalNames = new Set(cat.filter(i => i.source === "personal")
+                               .map(i => i.invoke.slice(1)));
+    document.getElementById("skills").innerHTML = loaded.length
+      ? loaded.map(i => `<label class="row"><input type="checkbox" class="sk"
+          value="${esc(i.invoke.slice(1))}" checked> <code>${esc(i.invoke)}</code>
+          <span class="hint">${esc((i.desc||"").slice(0,90))}</span></label>`).join("")
+      : "<i>이미 모두 수동 상태입니다.</i>";
+    const plugkeys = [...new Set(cat.filter(i => i.source === "plugin"
+        && i.state === "enabled").map(i => i.plugin))];
+    document.getElementById("plugins").innerHTML = plugkeys.map(k =>
+      `<label class="row"><input type="checkbox" class="pl" value="${esc(k)}">
+       <code>${esc(k)}</code></label>`).join("") || "<i>활성 플러그인 없음</i>";
+    const ts = invres.tool_search;
+    document.getElementById("toolsearch").innerHTML = ts.deferred
+      ? `<p>✅ 지연로딩 활성 (현재: <code>${ts.value ?? "auto(기본)"}</code>) — 조치 불필요</p>`
+      : `<p>⚠️ <code>ENABLE_TOOL_SEARCH=false</code> — MCP 스키마 전체가 시작 시 로딩 중.
+         <label><input type="checkbox" id="fixts" checked> <b>auto로 전환 (강력 추천)</b></label></p>`;
+    document.getElementById("mcp").innerHTML = "<b>MCP 서버(user)</b>: " +
+      (invres.mcp.map(m => `<label class="row"><input type="checkbox" class="mc"
+        value="${esc(m.name)}"> 보관: <code>${esc(m.name)}</code></label>`).join("")
+        || "<i>없음</i>");
+    document.getElementById("agents").innerHTML = "<b>에이전트</b>: " +
+      (invres.agents.map(a => `<label class="row"><input type="checkbox" class="ag"
+        value="${esc(a.path.split("/").pop())}"> 보관: <code>${esc(a.name)}</code></label>`)
+        .join("") || "<i>없음</i>");
+    document.getElementById("projects").innerHTML = invres.projects.map(p =>
+      `<div><b>${esc(p.cwd)}</b>${p.has_mcp_json ?
+         ' <span class="hint">(.mcp.json 있음 — 읽기전용)</span>' : ""}<br>` +
+      p.skills.map(s => personalNames.has(s)
+        ? `<label class="row"><input type="checkbox" disabled> <code>/${esc(s)}</code>
+           <span class="hint">전역에 동명 스킬 존재 — 이동 불가</span></label>`
+        : `<label class="row"><input type="checkbox" class="mig"
+           data-proj="${esc(p.cwd)}" value="${esc(s)}"> 전역으로 이동:
+           <code>/${esc(s)}</code></label>`).join("") + "</div>").join("")
+      || "<i>스킬을 가진 로컬 프로젝트가 발견되지 않았습니다.</i>";
+  } catch (e) {
+    showBrainError(e.toString());
+  }
+}
+
+const vals = cls => [...document.querySelectorAll("input." + cls + ":checked")]
+  .map(x => x.value);
+
+async function apply() {
+  try {
+    const lw = { silence: vals("sk") };
+    const fixts = document.getElementById("fixts");
+    if (fixts && fixts.checked) lw.tool_search = "auto";
+    await brain("lightweight", "--json", JSON.stringify(lw));
+    for (const k of vals("pl")) await brain("disable-plugin", "--plugin", k);
+    for (const n of vals("mc")) await brain("stash-mcp", "--name", n);
+    for (const f of vals("ag")) await brain("archive-agent", "--file", f);
+    for (const el of document.querySelectorAll("input.mig:checked"))
+      await brain("migrate-skill", "--project", el.dataset.proj, "--name", el.value);
+    await brain("config-set", "--json", '{"wizard_completed": true}');
+    const rep = await brain("context-report");
+    document.getElementById("steps").style.display = "none";
+    document.getElementById("done").style.display = "block";
+    document.getElementById("after").innerHTML =
+      `적용 후 추정: <span class="total">${esc(rep.total_estimate.toString())}</span> 토큰`;
+    inv("notify", { title: "경량화 완료",
+      body: "새 Claude 세션부터 적용됩니다." });
+  } catch (e) {
+    showBrainError(e.toString());
+  }
+}
+
+async function skipWizard() {
+  try {
+    await brain("config-set", "--json", '{"wizard_completed": true}');
+    window.close();
+  } catch (e) {
+    showBrainError(e.toString());
+  }
+}
+
+document.getElementById("apply").addEventListener("click", apply);
+document.getElementById("skip").addEventListener("click", skipWizard);
+document.getElementById("closeBtn").addEventListener("click", () => window.close());
+
+load();
+</script></body></html>
