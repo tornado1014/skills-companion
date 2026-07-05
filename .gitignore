@@ -1,0 +1,4 @@
+__pycache__/
+.pytest_cache/
+shell/src-tauri/target/
+shell/src-tauri/gen/
