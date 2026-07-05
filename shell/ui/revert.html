@@ -46,7 +46,7 @@ async function brainSafe(...args) {
   }
 }
 
-const sid = esc(new URLSearchParams(location.search).get("session"));
+const sid = new URLSearchParams(location.search).get("session") ?? "";
 let plugins = [];
 
 async function load() {
