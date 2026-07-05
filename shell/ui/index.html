@@ -1,2 +1,162 @@
-<!doctype html><meta charset="utf-8"><title>Skills Companion</title>
-<body style="font-family:sans-serif"><h1>Skills Companion (loading…)</h1></body>
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<title>Skills Companion</title>
+<style>
+:root{--bg:#f7f7f8;--fg:#1a1a1a;--card:#fff;--line:#e5e5e7;--muted:#6b7280;--accent:#2563eb}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e6e8;--card:#181b21;--line:#2a2e37;--muted:#9aa1ad;--accent:#5b9dff}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+font:14px/1.5 -apple-system,"Pretendard","Apple SD Gothic Neo",sans-serif}
+.wrap{max-width:960px;margin:0 auto;padding:16px}
+header{position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5;border-bottom:1px solid var(--line)}
+.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+select,input[type=search]{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
+input[type=search]{flex:1;min-width:180px}
+.rail{background:var(--card);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin:12px 0}
+.rail h3{margin:0 0 6px;font-size:13px;color:var(--accent)}
+.rec{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0}
+.rec .why{color:var(--muted);font-size:11.5px}
+h2.grp{margin:18px 0 6px;font-size:13.5px;color:var(--muted);border-left:3px solid var(--accent);padding-left:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+.chead{display:flex;justify-content:space-between;gap:8px;align-items:center}
+code.inv{color:var(--accent);font:12.5px ui-monospace,Menlo,monospace;font-weight:600;word-break:break-all}
+.badge{font-size:10px;font-weight:700;color:#fff;border-radius:5px;padding:2px 6px;white-space:nowrap}
+.desc{color:var(--muted);font-size:12px;margin-top:4px}
+button{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:7px;padding:4px 9px;cursor:pointer;font-size:12px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+#settings{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:16px 0}
+#settings table{width:100%;border-collapse:collapse;font-size:12.5px}
+#settings td{padding:4px 6px;border-top:1px solid var(--line)}
+.hidden{display:none!important}
+</style></head><body><div class="wrap">
+<header>
+  <b>🗂️ Skills Companion</b>
+  <div class="controls">
+    <label>그룹: <select id="groupBy">
+      <option value="category">카테고리</option><option value="source">출처</option>
+      <option value="state">상태</option><option value="invocation">호출</option>
+    </select></label>
+    <label><input type="checkbox" id="fDisabled"> 비활성 플러그인만</label>
+    <input id="q" type="search" placeholder="검색: 이름·설명·명령어">
+    <button id="refresh">↻</button>
+  </div>
+</header>
+<div class="rail"><h3>💡 이 세션 추천</h3><div id="recs">로딩…</div></div>
+<div id="list">로딩…</div>
+<div id="settings">
+  <b>⚙️ 설정</b>
+  <div style="margin:8px 0">
+    기본 되돌림 정책:
+    <select id="defPolicy">
+      <option value="ask">물어보기 (ask)</option>
+      <option value="auto-revert">자동 되돌림</option>
+      <option value="keep">유지</option>
+    </select>
+    <label style="margin-left:12px"><input type="checkbox" id="notifs"> 추천 알림 켜기</label>
+  </div>
+  <table id="perPlugin"></table>
+</div>
+</div>
+<script>
+const inv = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
+const brain = (...args) => inv("brain", { args });
+const BADGE = { loaded:["로딩중","#d97706"], silenced:["수동 /","#2563eb"],
+                enabled:["활성","#16a34a"], disabled:["비활성","#dc2626"] };
+const GLBL = { source:{personal:"개인",plugin:"플러그인"},
+               state:{loaded:"로딩중",silenced:"수동",enabled:"활성 플러그인",disabled:"비활성 플러그인"},
+               invocation:{auto:"자동",manual:"수동",command:"명령"} };
+let items = [], config = {};
+
+async function activatePlugin(pluginKey, invoke) {
+  const r = await brain("activate", "--plugin", pluginKey);
+  if (!r.ok) { await inv("notify",{title:"활성화 실패",body:r.error||""}); return; }
+  await inv("copy_text", { text: "/reload-plugins" });
+  const typed = await inv("autotype_reload");
+  await inv("notify", { title: "플러그인 활성화됨",
+    body: typed ? invoke+" — /reload-plugins 자동 입력됨"
+                : invoke+" — /reload-plugins 붙여넣으세요 (복사됨)" });
+  load();
+}
+async function copyInvoke(invoke) {
+  await inv("copy_text", { text: invoke });
+  await inv("notify", { title: "복사됨", body: invoke + " — 세션에 붙여넣으세요" });
+}
+
+function card(i) {
+  const [bl, bc] = BADGE[i.state] || ["?", "#888"];
+  const act = (i.source === "plugin" && i.state === "disabled")
+    ? `<button class="primary" data-act="on" data-plugin="${i.plugin}" data-invoke="${i.invoke}">활성화</button>`
+    : `<button data-act="copy" data-invoke="${i.invoke}">복사</button>`;
+  return `<div class="card" data-text="${(i.invoke+" "+i.name+" "+i.desc).toLowerCase()
+           .replace(/"/g,"&quot;")}" data-state="${i.state}" data-source="${i.source}">
+    <div class="chead"><code class="inv">${i.invoke}</code>
+      <span><span class="badge" style="background:${bc}">${bl}</span> ${act}</span></div>
+    <div class="desc">${(i.desc||"").slice(0,220)}</div></div>`;
+}
+
+function render() {
+  const g = document.getElementById("groupBy").value;
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const onlyDis = document.getElementById("fDisabled").checked;
+  const groups = {};
+  for (const i of items) {
+    if (onlyDis && !(i.source === "plugin" && i.state === "disabled")) continue;
+    if (q && !(i.invoke+" "+i.name+" "+i.desc).toLowerCase().includes(q)) continue;
+    const key = (GLBL[g] && GLBL[g][i[g]]) || i[g] || "기타";
+    (groups[key] = groups[key] || []).push(i);
+  }
+  document.getElementById("list").innerHTML = Object.keys(groups).sort().map(k =>
+    `<h2 class="grp">${k} <small>${groups[k].length}</small></h2>
+     <div class="grid">${groups[k].map(card).join("")}</div>`).join("") || "결과 없음";
+}
+
+async function loadRecs() {
+  const r = await brain("recommend", "--top", "5");
+  const el = document.getElementById("recs");
+  if (!r.recommendations.length) { el.textContent = "현재 세션과 매칭되는 추천 없음"; return; }
+  el.innerHTML = r.recommendations.map(x => {
+    const i = x.item;
+    const btn = x.kind === "actionable"
+      ? `<button class="primary" data-act="on" data-plugin="${i.plugin}" data-invoke="${i.invoke}">활성화</button>`
+      : `<button data-act="copy" data-invoke="${i.invoke}">복사</button>`;
+    return `<div class="rec"><span><code class="inv">${i.invoke}</code>
+      <span class="why">← ${x.reasons.join(", ")}</span></span>${btn}</div>`;
+  }).join("");
+}
+
+async function loadSettings() {
+  config = await brain("config-get");
+  document.getElementById("defPolicy").value = config.default_policy;
+  document.getElementById("notifs").checked = !!config.notifications_enabled;
+  const rows = Object.entries(config.per_plugin || {});
+  document.getElementById("perPlugin").innerHTML = rows.length
+    ? "<tr><td><b>플러그인별 정책</b></td><td></td><td></td></tr>" + rows.map(([p, pol]) =>
+      `<tr><td><code>${p}</code></td><td>${pol}</td>
+       <td><button data-act="unset" data-plugin="${p}">해제</button></td></tr>`).join("")
+    : "";
+}
+async function saveConfig(patch) {
+  config = await brain("config-set", "--json", JSON.stringify(patch));
+  loadSettings();
+}
+
+async function load() { items = (await brain("scan")).items; render(); loadRecs(); loadSettings(); }
+
+document.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.act === "on") activatePlugin(b.dataset.plugin, b.dataset.invoke);
+  else if (b.dataset.act === "copy") copyInvoke(b.dataset.invoke);
+  else if (b.dataset.act === "unset") {
+    const pp = { ...config.per_plugin }; delete pp[b.dataset.plugin];
+    saveConfig({ per_plugin: pp });
+  } else if (b.id === "refresh") load();
+});
+document.getElementById("groupBy").addEventListener("change", render);
+document.getElementById("fDisabled").addEventListener("change", render);
+document.getElementById("q").addEventListener("input", render);
+document.getElementById("defPolicy").addEventListener("change",
+  e => saveConfig({ default_policy: e.target.value }));
+document.getElementById("notifs").addEventListener("change",
+  e => saveConfig({ notifications_enabled: e.target.checked }));
+load();
+</script></body></html>
