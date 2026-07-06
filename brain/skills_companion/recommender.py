@@ -88,36 +88,74 @@ def project_tokens(cwd, head_bytes=4096):
     return tokenize_ex(" ".join(p for p in parts if p))
 
 
-def _corpus(item):
-    return set(tokenize(
-        f"{item['invoke']} {item['name']} {item['desc']} {item['category']}"))
+H_HISTORY = 2.0
 
 
-def recommend(items, signals, top_k=5, min_matches=2):
-    query = Counter(tokenize(" ".join(
-        signals.get("texts", []) + signals.get("tools", []))))
-    if not query:
+def _corpus_ex(item):
+    tx = tokenize_ex(
+        f"{item['invoke']} {item['name']} {item['desc']} {item['category']}")
+    return {"set": set(tx["tokens"]), "visible": tx["visible"]}
+
+
+def _sub_score(query, corpus_set, df, n, min_matches):
+    matched = [t for t in query if t in corpus_set]
+    if len(matched) < min_matches:
+        return 0.0, []
+    score = sum(query[t] * math.log(1 + n / df[t]) for t in matched)
+    score /= math.sqrt(len(corpus_set) or 1)
+    return score, matched
+
+
+def _visible_top(matched, visible, query, k=3):
+    vs = [t for t in matched if t in visible]
+    return sorted(vs, key=lambda t: -query[t])[:k]
+
+
+def recommend(items, signals, top_k=5, min_matches=2,
+              history=None, project_tokens=None):
+    history = history or {}
+    proj = project_tokens or {"tokens": [], "visible": set()}
+    conv = tokenize_ex(" ".join(
+        signals.get("texts", []) + signals.get("tools", [])))
+    conv_q, proj_q = Counter(conv["tokens"]), Counter(proj["tokens"])
+    if not conv_q and not proj_q and not history:
         return []
-    corpora = [_corpus(i) for i in items]
+    umc = signals.get("user_msg_count")
+    w_conv = 1.0 if umc is None else min(1.0, umc / 8)
+    w_proj = 1.0 - w_conv
+    corpora = [_corpus_ex(i) for i in items]
     df = Counter()
     for c in corpora:
-        df.update(c)
+        df.update(c["set"])
     n = max(len(items), 1)
     recs = []
     for item, corpus in zip(items, corpora):
-        matched = [t for t in query if t in corpus]
-        if len(matched) < min_matches:
+        conv_score, conv_matched = _sub_score(
+            conv_q, corpus["set"], df, n, min_matches)
+        proj_score, proj_matched = _sub_score(
+            proj_q, corpus["set"], df, n, 1)
+        hist_count = history.get(item.get("plugin") or "", 0)
+        hist_boost = math.log(1 + hist_count) * H_HISTORY
+        score = w_conv * conv_score + w_proj * (proj_score + hist_boost)
+        if score <= 0:
             continue
-        score = sum(query[t] * math.log(1 + n / df[t]) for t in matched)
-        score /= math.sqrt(len(corpus) or 1)
         actionable = item["source"] == "plugin" and item["state"] == "disabled"
         if actionable:
             score *= BOOST_DISABLED
+        reasons = []
+        if hist_count and w_proj > 0:
+            reasons.append(f"이 프로젝트에서 {hist_count}회 사용")
+        pv = _visible_top(proj_matched, proj["visible"], proj_q)
+        if pv and proj_score > 0 and w_proj > 0:
+            reasons.append("프로젝트: " + ", ".join(pv))
+        cv = _visible_top(conv_matched, conv["visible"], conv_q)
+        if cv and conv_score > 0 and w_conv > 0:
+            reasons.append("대화: " + ", ".join(cv))
         recs.append({
             "item": item,
             "score": round(score, 4),
             "kind": "actionable" if actionable else "informational",
-            "reasons": sorted(matched, key=lambda t: -query[t])[:5],
+            "reasons": reasons,
         })
     recs.sort(key=lambda r: -r["score"])
     return recs[:top_k]

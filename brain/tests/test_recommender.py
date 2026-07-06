@@ -19,7 +19,7 @@ def test_actionable_recommendation_for_disabled_plugin(claude_home):
     top = recs[0]
     assert top["item"]["invoke"] == "/understand-anything:understand"
     assert top["kind"] == "actionable"
-    assert "codebase" in top["reasons"] or "knowledge" in top["reasons"]
+    assert any(("codebase" in r) or ("knowledge" in r) for r in top["reasons"])
 
 
 def test_korean_match_informational(claude_home):
@@ -76,3 +76,59 @@ def test_project_tokens_reads_known_files(tmp_path):
 def test_project_tokens_empty_or_missing_cwd():
     assert recommender.project_tokens("") == {"tokens": [], "visible": set()}
     assert recommender.project_tokens("/nonexistent-xyz-123")["tokens"] == []
+
+
+UA = "understand-anything@understand-anything"
+KL = "korean-law@korean-law-marketplace"
+
+
+def test_recommend_blending_shifts_with_msg_count(claude_home):
+    items = scanner.scan()["items"]
+    hist = {KL: 3}
+    proj = recommender.tokenize_ex("법령 판례 리서치 legal research")
+    conv = {"texts": ["analyze codebase architecture",
+                      "knowledge graph of components"], "tools": []}
+
+    # 초반(umc=0): w_conv=0 → 이력+프로젝트만. korean-law가 뜨고 understand는 없음
+    early = recommender.recommend(items, dict(conv, user_msg_count=0),
+                                  history=hist, project_tokens=proj)
+    assert early and early[0]["item"]["plugin"] == KL
+    assert any("3회 사용" in r for r in early[0]["reasons"])
+    assert all(r["item"]["invoke"] != "/understand-anything:understand"
+               for r in early)
+
+    # 중반(umc=4): 혼합 — 둘 다 등장
+    mid = recommender.recommend(items, dict(conv, user_msg_count=4),
+                                history=hist, project_tokens=proj)
+    invokes = [r["item"]["invoke"] for r in mid]
+    assert "/understand-anything:understand" in invokes
+    assert any(r["item"]["plugin"] == KL for r in mid)
+
+    # 후반(umc=20): w_proj=0 → 대화 신호가 지배
+    late = recommender.recommend(items, dict(conv, user_msg_count=20),
+                                 history=hist, project_tokens=proj)
+    assert late[0]["item"]["invoke"] == "/understand-anything:understand"
+    assert all(r["item"]["plugin"] != KL for r in late)
+
+
+def test_recommend_history_only_item_needs_no_matches(claude_home):
+    items = scanner.scan()["items"]
+    recs = recommender.recommend(items, {"texts": [], "tools": [],
+                                         "user_msg_count": 0},
+                                 history={UA: 2})
+    assert recs and recs[0]["item"]["plugin"] == UA
+    assert recs[0]["reasons"] == ["이 프로젝트에서 2회 사용"]
+
+
+def test_recommend_reasons_are_human_strings_no_bigram(claude_home):
+    items = scanner.scan()["items"]
+    signals = {"texts": ["특허번역 명세서 작업을 계속합니다"], "tools": []}
+    recs = recommender.recommend(items, signals)
+    kipo = next(r for r in recs if r["item"]["invoke"] == "/patent-en-ko-kipo")
+    assert any(r.startswith("대화: ") for r in kipo["reasons"])
+    joined = " ".join(kipo["reasons"])
+    assert "특허번역" in joined            # 온전 토큰이 노출됨
+    # bigram·어미 조각이 단독 근거로 나열되지 않음 ("특허번역" 부분열은 무관)
+    listed = [t for r in kipo["reasons"] if r.startswith("대화: ")
+              for t in r[len("대화: "):].split(", ")]
+    assert "허번" not in listed and "니다" not in listed and "합니" not in listed
