@@ -41,3 +41,19 @@ def test_ledger_add_dedup_and_remove(monkeypatch, tmp_path):
     assert [e["plugin"] for e in stores.load_ledger()["S1"]] == ["kl@kl"]
     stores.ledger_remove("S1", "kl@kl")
     assert "S1" not in stores.load_ledger()    # empty list pruned
+
+
+def test_history_add_and_for(claude_home):
+    UA = "understand-anything@understand-anything"
+    stores.history_add("/w", UA)
+    stores.history_add("/w", UA)
+    stores.history_add("/other", UA)
+    assert stores.history_for("/w") == {UA: 2}
+    assert stores.history_for("/none") == {}
+    raw = stores.read_json(paths.activation_history_path(), {})
+    assert raw["/w"][UA]["count"] == 2 and raw["/w"][UA]["last_ts"] > 0
+
+
+def test_history_add_empty_cwd_is_noop(claude_home):
+    stores.history_add("", "x@y")
+    assert stores.read_json(paths.activation_history_path(), {}) == {}

@@ -42,5 +42,9 @@ def signals_dir() -> Path:
     return p
 
 
+def activation_history_path() -> Path:
+    return state_dir() / "activation-history.json"
+
+
 def claude_json_path() -> Path:
     return claude_home().parent / ".claude.json"

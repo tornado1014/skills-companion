@@ -64,6 +64,12 @@ def extract_signals(path, last_n=30, tail_bytes=400_000):
             "user_texts": user_texts[-last_n:], "user_msg_count": user_msg_count}
 
 
+def session_path(session_id):
+    for f in paths.projects_dir().glob(f"*/{session_id}.jsonl"):
+        return str(f)
+    return None
+
+
 def live_sessions(exclude=None, threshold=1800):
     now = time.time()
     live = set()

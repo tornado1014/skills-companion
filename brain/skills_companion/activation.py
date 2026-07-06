@@ -22,11 +22,13 @@ def activate(plugin_key, session_id=None, cwd=""):
     if ep[plugin_key]:
         if session_id and _app_enabled(plugin_key):
             stores.ledger_add(session_id, plugin_key, cwd)
+            stores.history_add(cwd, plugin_key)
         return {"ok": True, "already_enabled": True, "reload_command": RELOAD}
     ep[plugin_key] = True
     stores.atomic_write_json(paths.settings_path(), settings, backup=True)
     if session_id:
         stores.ledger_add(session_id, plugin_key, cwd)
+    stores.history_add(cwd, plugin_key)
     return {"ok": True, "already_enabled": False, "reload_command": RELOAD}
 
 

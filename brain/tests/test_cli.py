@@ -71,6 +71,13 @@ def test_cli_wizard_flag_default(claude_home, capsys):
     assert cfg["wizard_completed"] is False
 
 
+def test_cli_activate_records_history_with_cwd(claude_home, write_transcript, capsys):
+    from skills_companion import stores
+    write_transcript("S9", ["work"], cwd="/tmp/work")
+    _run(capsys, ["activate", "--plugin", UA, "--session", "S9"])
+    assert stores.history_for("/tmp/work") == {UA: 1}
+
+
 def test_cli_disable_plugin(claude_home, capsys):
     out = _run(capsys, ["disable-plugin", "--plugin",
                         "korean-law@korean-law-marketplace"])

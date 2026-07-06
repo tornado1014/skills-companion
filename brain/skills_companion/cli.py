@@ -75,7 +75,12 @@ def main(argv=None):
         if not sid:
             sess = transcripts.newest_session()
             sid = sess["session_id"] if sess else None
-        out = activation.activate(args.plugin, session_id=sid)
+        cwd = ""
+        if sid:
+            tp = transcripts.session_path(sid)
+            if tp:
+                cwd = transcripts.extract_signals(tp).get("cwd", "")
+        out = activation.activate(args.plugin, session_id=sid, cwd=cwd)
         out["session"] = sid
     elif args.cmd == "session-end":
         out = revert.on_session_end(args.session, reason=args.reason)

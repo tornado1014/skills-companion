@@ -40,6 +40,19 @@ def test_activate_unknown_plugin(claude_home):
     assert r["ok"] is False and "unknown" in r["error"]
 
 
+def test_activate_records_history(claude_home):
+    activation.activate(UA, session_id="S1", cwd="/w")
+    assert stores.history_for("/w") == {UA: 1}
+    # 앱이 켠 플러그인을 다른 세션이 또 쓰면 그 cwd에도 누적
+    activation.activate(UA, session_id="S2", cwd="/w2")
+    assert stores.history_for("/w2") == {UA: 1}
+
+
+def test_activate_without_cwd_records_nothing(claude_home):
+    activation.activate(UA, session_id="S1")
+    assert stores.read_json(paths.activation_history_path(), {}) == {}
+
+
 def test_deactivate(claude_home):
     activation.activate(UA, session_id="S1")
     r = activation.deactivate(UA)

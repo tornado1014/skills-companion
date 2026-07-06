@@ -67,6 +67,23 @@ def ledger_add(session_id, plugin, cwd=""):
     return ledger
 
 
+def history_add(cwd, plugin_key):
+    hist = read_json(paths.activation_history_path(), {})
+    if not cwd:
+        return hist
+    entry = hist.setdefault(cwd, {}).setdefault(
+        plugin_key, {"count": 0, "last_ts": 0.0})
+    entry["count"] += 1
+    entry["last_ts"] = time.time()
+    atomic_write_json(paths.activation_history_path(), hist)
+    return hist
+
+
+def history_for(cwd):
+    hist = read_json(paths.activation_history_path(), {})
+    return {k: v.get("count", 0) for k, v in hist.get(cwd or "", {}).items()}
+
+
 def ledger_remove(session_id, plugin=None):
     ledger = load_ledger()
     if plugin is None:
