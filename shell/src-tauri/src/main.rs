@@ -279,6 +279,11 @@ fn poll_once(app: &AppHandle, notified: &mut HashSet<String>) {
         if let Err(e) = rebuild_tray(app, &recs, &label) {
             eprintln!("rebuild_tray failed: {e}");
         }
+        // Keep the main window title in sync with the tray, so the open app
+        // also shows which session it is tracking.
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.set_title(&format!("Skills Companion — {label}"));
+        }
         if notifications_on {
             for r in &recs {
                 if r["kind"] != "actionable" {
