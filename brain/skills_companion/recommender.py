@@ -1,4 +1,6 @@
+import json
 import math
+import os
 import re
 from collections import Counter
 
@@ -50,6 +52,40 @@ def tokenize_ex(text):
 
 def tokenize(text):
     return tokenize_ex(text)["tokens"]
+
+
+_PROJECT_TEXT_FILES = ("CLAUDE.md", "README.md", "pyproject.toml")
+
+
+def project_tokens(cwd, head_bytes=4096):
+    if not cwd:
+        return {"tokens": [], "visible": set()}
+    parts = []
+    for name in _PROJECT_TEXT_FILES:
+        try:
+            with open(os.path.join(cwd, name), encoding="utf-8",
+                      errors="ignore") as f:
+                parts.append(f.read(head_bytes))
+        except OSError:
+            continue
+    try:
+        with open(os.path.join(cwd, "package.json"), encoding="utf-8",
+                  errors="ignore") as f:
+            pkg = json.loads(f.read(head_bytes))
+        parts.append(str(pkg.get("name", "")))
+        parts.append(str(pkg.get("description", "")))
+        parts.extend((pkg.get("dependencies") or {}).keys())
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+    try:
+        with open(os.path.join(cwd, "Cargo.toml"), encoding="utf-8",
+                  errors="ignore") as f:
+            for line in f.read(head_bytes).splitlines():
+                if line.strip().startswith(("name", "description")):
+                    parts.append(line)
+    except OSError:
+        pass
+    return tokenize_ex(" ".join(p for p in parts if p))
 
 
 def _corpus(item):

@@ -1,3 +1,5 @@
+import json
+
 from skills_companion import recommender, scanner
 
 
@@ -55,3 +57,22 @@ def test_tokenize_ex_whole_word_without_josa_is_full_token():
 def test_tokenize_backcompat_returns_flat_list():
     toks = recommender.tokenize("Analyze 특허번역")
     assert "analyze" in toks and "특허" in toks and "특허번역" in toks
+
+
+def test_project_tokens_reads_known_files(tmp_path):
+    (tmp_path / "CLAUDE.md").write_text("특허 보정서 자동화 프로젝트", encoding="utf-8")
+    (tmp_path / "package.json").write_text(json.dumps({
+        "name": "pdf-merge", "description": "merge pdf files",
+        "dependencies": {"pdf-lib": "1.0"}}), encoding="utf-8")
+    (tmp_path / "Cargo.toml").write_text(
+        'name = "tauri-shell"\nversion = "1"\n', encoding="utf-8")
+    tx = recommender.project_tokens(str(tmp_path))
+    assert "보정서" in tx["visible"]
+    assert "pdf-merge" in tx["tokens"]
+    assert "pdf-lib" in tx["tokens"]
+    assert "tauri-shell" in tx["tokens"]
+
+
+def test_project_tokens_empty_or_missing_cwd():
+    assert recommender.project_tokens("") == {"tokens": [], "visible": set()}
+    assert recommender.project_tokens("/nonexistent-xyz-123")["tokens"] == []
