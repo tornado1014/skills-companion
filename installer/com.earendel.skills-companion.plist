@@ -7,4 +7,6 @@
   <array><string>/Applications/Skills Companion.app/Contents/MacOS/skills-companion</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><false/>
+  <key>StandardErrorPath</key>
+  <string>/Users/earendel/Library/Logs/skills-companion.log</string>
 </dict></plist>
