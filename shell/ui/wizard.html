@@ -52,6 +52,7 @@ button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
 <script>
 const inv = (c, a) => window.__TAURI__.core.invoke(c, a);
 const brain = (...args) => inv("brain", { args });
+const closeWin = () => window.__TAURI__.window.getCurrentWindow().close();
 let cat = [], inventory = {}, personalNames = new Set();
 
 function esc(s) {
@@ -192,12 +193,12 @@ async function apply() {
 
 async function skipWizard() {
   const r = await brainSafe("config-set", "--json", '{"wizard_completed": true}');
-  if (r) window.close();
+  if (r) closeWin();
 }
 
 document.getElementById("apply").addEventListener("click", apply);
 document.getElementById("skip").addEventListener("click", skipWizard);
-document.getElementById("closeBtn").addEventListener("click", () => window.close());
+document.getElementById("closeBtn").addEventListener("click", () => closeWin());
 
 load();
 </script></body></html>

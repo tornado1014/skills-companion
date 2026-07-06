@@ -96,10 +96,13 @@ fn open_revert(app: &AppHandle, session: &str) {
         return;
     }
     let url = format!("revert.html?session={session}");
-    let _ = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
+    if let Err(e) = WebviewWindowBuilder::new(app, &label, WebviewUrl::App(url.into()))
         .title("세션 정리 — Skills Companion")
         .inner_size(480.0, 460.0)
-        .build();
+        .build()
+    {
+        eprintln!("open_revert({label}) failed: {e}");
+    }
 }
 
 fn activate_flow(app: &AppHandle, plugin: &str, invoke_label: &str) {
@@ -294,6 +297,13 @@ fn main() {
                 }
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Skills Companion");
+        .build(tauri::generate_context!())
+        .expect("error while running Skills Companion")
+        .run(|app, event| {
+            // `open -a` 재실행(Reopen) 시 숨겨진 메인 창을 표시 — /myskills 진입점
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                open_main(app);
+            }
+        });
 }
