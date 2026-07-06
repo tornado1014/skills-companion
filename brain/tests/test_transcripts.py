@@ -29,6 +29,32 @@ def test_extract_signals_skips_garbage_lines(write_transcript, claude_home):
     assert sig["texts"] == ["hello"]
 
 
+def test_extract_signals_v2_fields(write_transcript):
+    f = write_transcript("SV2", ["첫 질문", "둘째 질문 합니다"],
+                         tools=["Bash"], cwd="/tmp/proj")
+    sig = transcripts.extract_signals(f)
+    assert sig["cwd"] == "/tmp/proj"
+    assert sig["user_texts"] == ["첫 질문", "둘째 질문 합니다"]
+    assert sig["user_msg_count"] == 2
+    assert "첫 질문" in sig["texts"] and sig["tools"] == ["Bash"]   # 기존 키 유지
+
+
+def test_extract_signals_v2_tool_result_turn_not_counted(write_transcript, claude_home):
+    f = write_transcript("SV3", ["질문 하나"], cwd="/tmp/proj")
+    with open(f, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "user", "cwd": "/tmp/proj", "message": {
+            "role": "user", "content": [{"type": "tool_result", "content": "ok"}]}}) + "\n")
+    sig = transcripts.extract_signals(f)
+    assert sig["user_msg_count"] == 1
+    assert sig["user_texts"] == ["질문 하나"]
+
+
+def test_extract_signals_v2_defaults_on_missing_file(claude_home):
+    sig = transcripts.extract_signals("/nonexistent/x.jsonl")
+    assert sig == {"texts": [], "tools": [], "cwd": "",
+                   "user_texts": [], "user_msg_count": 0}
+
+
 def test_live_sessions_threshold_and_signal(write_transcript, claude_home):
     now = time.time()
     write_transcript("LIVE1", ["x"], mtime=now)
