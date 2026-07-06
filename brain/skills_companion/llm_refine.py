@@ -1,6 +1,10 @@
 import json
+import os
 import re
+import shutil
+import signal
 import subprocess
+import tempfile
 import time
 
 from . import paths, stores
@@ -19,10 +23,50 @@ def _cache_path(session_id):
     return d / f"{session_id}.json"
 
 
+def _kill_tree(p):
+    # Kill the runner and any children it spawned. On POSIX we created a new
+    # session (setsid) so we can signal the whole process group; on Windows we
+    # created a new process group and fall back to Popen.kill for the tree.
+    if os.name == "nt":
+        try:
+            p.kill()
+        except OSError:
+            pass
+    else:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
 def default_runner(prompt):
-    r = subprocess.run(["claude", "-p", prompt, "--model", "haiku"],
-                       capture_output=True, text=True, timeout=TIMEOUT)
-    return r.stdout if r.returncode == 0 else None
+    # Capture via a temp file (not a pipe) and run in a new session/group.
+    # `claude` can spawn background children (MCP servers, hooks); if they
+    # inherit a stdout *pipe* they hold it open and defeat the timeout, hanging
+    # forever. A file avoids that, and the new session/group lets us kill the
+    # whole tree on timeout so nothing lingers. `claude` is an npm shim
+    # (claude.cmd) on Windows, so resolve it via PATHEXT with shutil.which.
+    exe = shutil.which("claude") or "claude"
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    with tempfile.TemporaryFile() as out:
+        p = subprocess.Popen(
+            [exe, "-p", prompt, "--model", "haiku"],
+            stdout=out, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            **kwargs)
+        try:
+            p.wait(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            _kill_tree(p)
+            p.wait()
+            raise
+        if p.returncode != 0:
+            return None
+        out.seek(0)
+        return out.read().decode("utf-8", "replace")
 
 
 def _build_prompt(user_texts, local_recs):

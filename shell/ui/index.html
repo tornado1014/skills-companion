@@ -2,67 +2,103 @@
 <html lang="ko"><head><meta charset="utf-8">
 <title>Skills Companion</title>
 <style>
-:root{--bg:#f7f7f8;--fg:#1a1a1a;--card:#fff;--line:#e5e5e7;--muted:#6b7280;--accent:#2563eb}
-@media(prefers-color-scheme:dark){:root{--bg:#0f1115;--fg:#e6e6e8;--card:#181b21;--line:#2a2e37;--muted:#9aa1ad;--accent:#5b9dff}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-font:14px/1.5 -apple-system,"Pretendard","Apple SD Gothic Neo",sans-serif}
-.wrap{max-width:960px;margin:0 auto;padding:16px}
-header{position:sticky;top:0;background:var(--bg);padding:10px 0;z-index:5;border-bottom:1px solid var(--line)}
-.controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
-select,input[type=search]{padding:7px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg)}
-input[type=search]{flex:1;min-width:180px}
-.rail{background:var(--card);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;margin:12px 0}
-.rail h3{margin:0 0 6px;font-size:13px;color:var(--accent)}
-.rec{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0}
-.rec .why{color:var(--muted);font-size:11.5px}
-h2.grp{margin:18px 0 6px;font-size:13.5px;color:var(--muted);border-left:3px solid var(--accent);padding-left:8px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:8px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
-.chead{display:flex;justify-content:space-between;gap:8px;align-items:center}
-code.inv{color:var(--accent);font:12.5px ui-monospace,Menlo,monospace;font-weight:600;word-break:break-all}
-.badge{font-size:10px;font-weight:700;color:#fff;border-radius:5px;padding:2px 6px;white-space:nowrap}
-.desc{color:var(--muted);font-size:12px;margin-top:4px}
-button{border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:7px;padding:4px 9px;cursor:pointer;font-size:12px}
+:root{
+  --bg:#fafafc; --panel:#ffffff; --line:#e4e4ea; --fg:#1a1a1f; --muted:#71717c;
+  --accent:#7c5dfa; --accent-hi:#6a4be8; --accent-soft:rgba(124,93,250,.10);
+  --accent-line:rgba(124,93,250,.35); --btn-bg:#ffffff; --btn-line:#d8d8e0;
+  --hover:rgba(20,20,30,.05); --glow:0 0 24px rgba(124,93,250,.10);
+  --ok:#16a34a; --bad:#dc2626; --man:#2563eb; --load:#d97706;
+}
+@media(prefers-color-scheme:dark){:root{
+  --bg:#101014; --panel:#17171d; --line:#26262e; --fg:#e2e2e6; --muted:#9a9aa4;
+  --accent:#7c5dfa; --accent-hi:#a48bff; --accent-soft:rgba(124,93,250,.14);
+  --accent-line:rgba(124,93,250,.45); --btn-bg:#1c1c23; --btn-line:#32323c;
+  --hover:rgba(255,255,255,.05); --glow:0 0 24px rgba(124,93,250,.15);
+  --ok:#30d158; --bad:#ff453a; --man:#5b9dff; --load:#ffb340;
+}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;display:flex;overflow:hidden;background:var(--bg);color:var(--fg);
+font:13.5px/1.5 -apple-system,"Pretendard","Apple SD Gothic Neo",sans-serif}
+code.inv{font:600 12.5px ui-monospace,"SF Mono",Menlo,monospace;color:var(--accent-hi);
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+button{border:1px solid var(--btn-line);background:var(--btn-bg);color:var(--fg);
+border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;min-width:56px;
+transition:background 120ms ease,border-color 120ms ease;white-space:nowrap}
+button:hover{border-color:var(--accent-line)}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-#settings{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;margin:16px 0}
-#settings table{width:100%;border-collapse:collapse;font-size:12.5px}
-#settings td{padding:4px 6px;border-top:1px solid var(--line)}
-.hidden{display:none!important}
-#err{color:#dc2626;padding:6px 0;font-size:12.5px}
-</style></head><body><div class="wrap">
-<header>
-  <b>🗂️ Skills Companion</b>
-  <div class="controls">
-    <label>그룹: <select id="groupBy">
-      <option value="category">카테고리</option><option value="source">출처</option>
-      <option value="state">상태</option><option value="invocation">호출</option>
-    </select></label>
-    <label><input type="checkbox" id="fDisabled"> 비활성 플러그인만</label>
-    <input id="q" type="search" placeholder="검색: 이름·설명·명령어">
-    <button id="refresh">↻</button>
-  </div>
-</header>
-<div id="err" class="hidden"></div>
-<div class="rail"><h3>💡 이 세션 추천</h3><div id="recs">로딩…</div></div>
-<div id="list">로딩…</div>
-<div id="settings">
-  <b>⚙️ 설정</b>
-  <div style="margin:8px 0">
-    기본 되돌림 정책:
-    <select id="defPolicy">
-      <option value="ask">물어보기 (ask)</option>
-      <option value="auto-revert">자동 되돌림</option>
-      <option value="keep">유지</option>
-    </select>
-    <label style="margin-left:12px"><input type="checkbox" id="notifs"> 추천 알림 켜기</label>
-  </div>
-  <table id="perPlugin"></table>
-  <div id="report" style="margin-top:12px">
-    <b>📊 컨텍스트 리포트 (추정)</b>
-    <button data-act="wizard" style="margin-left:8px">마법사 다시 실행</button>
-    <table id="reportTable" style="width:100%;border-collapse:collapse;font-size:12.5px"></table>
-  </div>
+button.primary:hover{background:var(--accent-hi)}
+:focus-visible{outline:2px solid var(--accent-line);outline-offset:1px}
+select,input[type=search]{padding:7px 12px;border:1px solid var(--line);
+border-radius:8px;background:var(--panel);color:var(--fg);font:inherit;font-size:12.5px}
+input[type=search]:focus{border-color:var(--accent-line);
+box-shadow:0 0 0 3px var(--accent-soft);outline:none}
+/* ── 사이드바 ── */
+#sb{width:168px;flex-shrink:0;border-right:1px solid var(--line);padding:12px 0;
+display:flex;flex-direction:column;gap:1px;overflow-y:auto;overflow-x:hidden}
+#sb .app{font-weight:700;font-size:13px;padding:2px 14px 10px;white-space:nowrap}
+.nav{padding:5px 10px 5px 14px;display:flex;gap:6px;align-items:center;
+cursor:pointer;font-size:12.5px;border-right:2px solid transparent;
+transition:background 120ms ease}
+.nav .lab{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav:hover{background:var(--hover)}
+.nav.sel{background:var(--accent-soft);border-right-color:var(--accent);font-weight:600}
+.nav .cnt{color:var(--muted);font-size:11px;flex-shrink:0;
+font-variant-numeric:tabular-nums}
+#sb .sep{border-top:1px solid var(--line);margin:8px 12px}
+/* ── 메인 ── */
+#main{flex:1;display:flex;flex-direction:column;min-width:0}
+#topbar{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);
+align-items:center;flex-shrink:0}
+#q{flex:1;min-width:0}
+#content{flex:1;overflow-y:auto;padding:0 16px 18px}
+#err{color:var(--bad);padding:6px 16px;font-size:12.5px}
+/* ── 히어로 추천 ── */
+.hero{margin:14px 0 2px;padding:11px 14px;border-radius:10px;
+background:linear-gradient(135deg,var(--accent-soft),transparent);
+border:1px solid var(--accent-line);box-shadow:var(--glow)}
+.hero h4{margin:0 0 4px;font-size:12.5px;color:var(--accent-hi);letter-spacing:.02em}
+.hrow{display:grid;grid-template-columns:auto 1fr auto;gap:12px;
+align-items:center;padding:6px 0}
+.hrow code.inv{max-width:38ch}
+.why{color:var(--muted);font-size:11.5px;min-width:0;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+/* ── 리스트 행 ── */
+.gh{margin:16px 2px 6px;font-size:11px;text-transform:uppercase;
+letter-spacing:.06em;color:var(--muted);font-weight:700}
+.gh small{font-weight:400;letter-spacing:0;margin-left:2px}
+.grp{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:3px 6px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.lrow{display:grid;grid-template-columns:7px auto 1fr auto;gap:11px;
+align-items:center;padding:7px 8px;border-radius:7px;
+transition:background 120ms ease}
+.lrow+.lrow{border-top:1px solid var(--line)}
+.lrow:hover{background:var(--hover)}
+.lrow code.inv{max-width:34ch}
+.lrow .d{color:var(--muted);font-size:12px;min-width:0;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis}
+.dot{width:7px;height:7px;border-radius:99px}
+@media(prefers-color-scheme:dark){.dot{box-shadow:0 0 6px currentColor}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+/* ── 설정·리포트 패널 ── */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+padding:14px;margin:12px 0}
+.panel h3{margin:0 0 10px;font-size:13.5px}
+.panel table{width:100%;border-collapse:collapse;font-size:12.5px}
+.panel td{padding:4px 6px;border-top:1px solid var(--line)}
+.muted{color:var(--muted)}
+</style></head><body>
+<div id="sb">
+  <div class="app">🗂️ Skills Companion</div>
+  <div id="nav"></div>
 </div>
+<div id="main">
+  <div id="topbar">
+    <input id="q" type="search" placeholder="⌕ 이름·설명·명령 검색 (⌘K)">
+    <button id="refresh" title="새로고침">↻</button>
+  </div>
+  <div id="err" style="display:none"></div>
+  <div id="content">로딩…</div>
 </div>
 <script>
 const inv = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
@@ -70,28 +106,23 @@ const brain = (...args) => inv("brain", { args });
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function clearErr() {
   const el = document.getElementById("err");
-  el.innerHTML = "";
-  el.classList.add("hidden");
+  el.innerHTML = ""; el.style.display = "none";
 }
 async function brainSafe(...args) {
-  try {
-    const r = await brain(...args);
-    clearErr();
-    return r;
-  } catch (e) {
+  try { const r = await brain(...args); clearErr(); return r; }
+  catch (e) {
     const el = document.getElementById("err");
     el.innerHTML = "브레인 호출 실패: " + esc(String(e));
-    el.classList.remove("hidden");
+    el.style.display = "block";
     return null;
   }
 }
-const BADGE = { loaded:["로딩중","#d97706"], silenced:["수동 /","#2563eb"],
-                enabled:["활성","#16a34a"], disabled:["비활성","#dc2626"] };
-const GLBL = { source:{personal:"개인",plugin:"플러그인"},
-               state:{loaded:"로딩중",silenced:"수동",enabled:"활성 플러그인",disabled:"비활성 플러그인"},
-               invocation:{auto:"자동",manual:"수동",command:"명령"} };
-let items = [], config = {};
+const DOT = { loaded:"var(--load)", silenced:"var(--man)",
+              enabled:"var(--ok)", disabled:"var(--bad)" };
+const STATE_LABEL = { loaded:"로딩중", silenced:"수동", enabled:"활성", disabled:"비활성" };
+let items = [], recs = [], config = {}, report = null, view = "session";
 
+/* ── 액션 ── */
 async function activatePlugin(pluginKey, invoke) {
   const r = await brainSafe("activate", "--plugin", pluginKey);
   if (!r) return;
@@ -108,91 +139,152 @@ async function copyInvoke(invoke) {
   await inv("notify", { title: "복사됨", body: invoke + " — 세션에 붙여넣으세요" });
 }
 
-function card(i) {
-  const [bl, bc] = BADGE[i.state] || ["?", "#888"];
-  const act = (i.source === "plugin" && i.state === "disabled")
+/* ── 사이드바 ── */
+function navEntries() {
+  const cats = {};
+  for (const i of items) cats[i.category] = (cats[i.category] || 0) + 1;
+  const disabledN = items.filter(i => i.source === "plugin" && i.state === "disabled").length;
+  return [
+    { id: "session", label: "✦ 이 세션" },
+    { id: "all", label: "전체", cnt: items.length },
+    ...Object.keys(cats).sort().map(c => ({ id: "cat:" + c, label: c, cnt: cats[c] })),
+    { id: "disabled", label: "비활성 플러그인", cnt: disabledN },
+    { sep: true },
+    { id: "report", label: "📊 컨텍스트 리포트" },
+    { id: "settings", label: "⚙️ 설정" },
+  ];
+}
+function renderSidebar() {
+  document.getElementById("nav").innerHTML = navEntries().map(n => n.sep
+    ? `<div class="sep"></div>`
+    : `<div class="nav${view === n.id ? " sel" : ""}" data-view="${esc(n.id)}">
+         <span class="lab" title="${esc(n.label)}">${esc(n.label)}</span>${n.cnt != null ? `<span class="cnt">${n.cnt}</span>` : ""}
+       </div>`).join("");
+}
+
+/* ── 히어로 추천 ── */
+function actionBtn(i) {
+  return (i.source === "plugin" && i.state === "disabled")
     ? `<button class="primary" data-act="on" data-plugin="${esc(i.plugin)}" data-invoke="${esc(i.invoke)}">활성화</button>`
     : `<button data-act="copy" data-invoke="${esc(i.invoke)}">복사</button>`;
-  return `<div class="card" data-text="${esc((i.invoke+" "+i.name+" "+i.desc).toLowerCase())}" data-state="${esc(i.state)}" data-source="${esc(i.source)}">
-    <div class="chead"><code class="inv">${esc(i.invoke)}</code>
-      <span><span class="badge" style="background:${bc}">${bl}</span> ${act}</span></div>
-    <div class="desc">${esc((i.desc||"").slice(0,220))}</div></div>`;
+}
+function heroHTML() {
+  const top = recs.slice(0, 3);
+  if (!top.length) return "";
+  return `<div class="hero"><h4>✦ 이 세션 추천</h4>` + top.map(x => {
+    const why = x.reasons.join(" · ");
+    return `<div class="hrow"><code class="inv" title="${esc(x.item.invoke)}">${esc(x.item.invoke)}</code>
+       <span class="why" title="${esc(why)}">${esc(why)}</span>
+       ${actionBtn(x.item)}</div>`;
+  }).join("") + `</div>`;
 }
 
+/* ── 리스트 행 ── */
+function rowHTML(i) {
+  const c = DOT[i.state] || "var(--muted)";
+  return `<div class="lrow">
+    <span class="dot" style="background:${c};color:${c}"
+      title="${esc(STATE_LABEL[i.state] || i.state)}"></span>
+    <code class="inv" title="${esc(i.invoke)}">${esc(i.invoke)}</code>
+    <span class="d" title="${esc((i.desc || "").slice(0, 300))}">${esc((i.desc || "").slice(0, 160))}</span>
+    ${actionBtn(i)}</div>`;
+}
+
+/* ── 설정·리포트 뷰 ── */
+function settingsHTML() {
+  const rows = Object.entries(config.per_plugin || {});
+  return `<div class="panel"><h3>⚙️ 설정</h3>
+    <div style="margin-bottom:10px">기본 되돌림 정책:
+      <select id="defPolicy">
+        <option value="ask">물어보기 (ask)</option>
+        <option value="auto-revert">자동 되돌림</option>
+        <option value="keep">유지</option>
+      </select>
+      <label style="margin-left:12px"><input type="checkbox" id="notifs"> 추천 알림 켜기</label>
+    </div>
+    <table id="perPlugin">${rows.length
+      ? "<tr><td><b>플러그인별 정책</b></td><td></td><td></td></tr>" + rows.map(([p, pol]) =>
+        `<tr><td><code class="inv">${esc(p)}</code></td><td>${esc(pol)}</td>
+         <td><button data-act="unset" data-plugin="${esc(p)}">해제</button></td></tr>`).join("")
+      : ""}</table>
+    <div style="margin-top:12px"><button data-act="wizard">🪶 경량화 마법사 다시 실행</button></div>
+  </div>`;
+}
+function reportHTML() {
+  if (!report) return `<div class="panel"><h3>📊 컨텍스트 리포트</h3><p class="muted">로딩…</p></div>`;
+  return `<div class="panel"><h3>📊 컨텍스트 리포트 (추정)</h3>
+    <table>${report.rows.map(r =>
+      `<tr><td>${r.controllable ? "🎛" : "📎"} ${esc(r.label)}</td>
+       <td style="text-align:right">${esc(r.tokens ?? "—")}</td>
+       <td class="muted">${esc(r.advice)}</td></tr>`).join("")}
+    <tr><td><b>합계(추정)</b></td>
+    <td style="text-align:right"><b>${esc(report.total_estimate)}</b></td><td></td></tr>
+    </table></div>`;
+}
+
+/* ── 메인 렌더 ── */
 function render() {
-  const g = document.getElementById("groupBy").value;
-  const q = document.getElementById("q").value.trim().toLowerCase();
-  const onlyDis = document.getElementById("fDisabled").checked;
-  const groups = {};
-  for (const i of items) {
-    if (onlyDis && !(i.source === "plugin" && i.state === "disabled")) continue;
-    if (q && !(i.invoke+" "+i.name+" "+i.desc).toLowerCase().includes(q)) continue;
-    const key = (GLBL[g] && GLBL[g][i[g]]) || i[g] || "기타";
-    (groups[key] = groups[key] || []).push(i);
+  renderSidebar();
+  const c = document.getElementById("content");
+  if (view === "settings") {
+    c.innerHTML = settingsHTML();
+    document.getElementById("defPolicy").value = config.default_policy || "ask";
+    document.getElementById("notifs").checked = !!config.notifications_enabled;
+    return;
   }
-  document.getElementById("list").innerHTML = Object.keys(groups).sort().map(k =>
-    `<h2 class="grp">${esc(k)} <small>${groups[k].length}</small></h2>
-     <div class="grid">${groups[k].map(card).join("")}</div>`).join("") || "결과 없음";
+  if (view === "report") { c.innerHTML = reportHTML(); return; }
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  let pool = items;
+  if (view === "disabled")
+    pool = pool.filter(i => i.source === "plugin" && i.state === "disabled");
+  else if (view.startsWith("cat:"))
+    pool = pool.filter(i => i.category === view.slice(4));
+  if (q) pool = pool.filter(i =>
+    (i.invoke + " " + i.name + " " + i.desc).toLowerCase().includes(q));
+  const groups = {};
+  for (const i of pool) (groups[i.category] = groups[i.category] || []).push(i);
+  const hero = (view === "session" && !q) ? heroHTML() : "";
+  const list = Object.keys(groups).sort().map(k =>
+    `<div class="gh">${esc(k)} <small>${groups[k].length}</small></div>` +
+    `<div class="grp">${groups[k].map(rowHTML).join("")}</div>`).join("");
+  c.innerHTML = hero + (list ||
+    `<div class="grp" style="margin-top:16px;padding:22px;text-align:center">
+       <span class="muted">검색 결과가 없어요 — 다른 키워드로 시도해보세요</span></div>`);
 }
 
+/* ── 데이터 로드 ── */
 async function loadRecs() {
-  const r = await brainSafe("recommend", "--top", "5");
-  const el = document.getElementById("recs");
-  if (!r) { el.textContent = ""; return; }
-  if (!r.recommendations.length) { el.textContent = "현재 세션과 매칭되는 추천 없음"; return; }
-  el.innerHTML = r.recommendations.map(x => {
-    const i = x.item;
-    const btn = x.kind === "actionable"
-      ? `<button class="primary" data-act="on" data-plugin="${esc(i.plugin)}" data-invoke="${esc(i.invoke)}">활성화</button>`
-      : `<button data-act="copy" data-invoke="${esc(i.invoke)}">복사</button>`;
-    return `<div class="rec"><span><code class="inv">${esc(i.invoke)}</code>
-      <span class="why">← ${x.reasons.map(esc).join(", ")}</span></span>${btn}</div>`;
-  }).join("");
+  const r = await brainSafe("recommend", "--top", "3");
+  recs = r ? (r.recommendations || []) : [];
+  if (view === "session") render();
 }
-
 async function loadSettings() {
   const c = await brainSafe("config-get");
-  if (!c) return;
-  config = c;
-  document.getElementById("defPolicy").value = config.default_policy;
-  document.getElementById("notifs").checked = !!config.notifications_enabled;
-  const rows = Object.entries(config.per_plugin || {});
-  document.getElementById("perPlugin").innerHTML = rows.length
-    ? "<tr><td><b>플러그인별 정책</b></td><td></td><td></td></tr>" + rows.map(([p, pol]) =>
-      `<tr><td><code>${esc(p)}</code></td><td>${esc(pol)}</td>
-       <td><button data-act="unset" data-plugin="${esc(p)}">해제</button></td></tr>`).join("")
-    : "";
+  if (c) config = c;
+  if (view === "settings") render();
+}
+async function loadReport() {
+  const rep = await brainSafe("context-report");
+  if (rep) report = rep;
+  if (view === "report") render();
 }
 async function saveConfig(patch) {
   const c = await brainSafe("config-set", "--json", JSON.stringify(patch));
   if (!c) return;
   config = c;
-  loadSettings();
+  if (view === "settings") render();
 }
-
-async function loadReport() {
-  const rep = await brainSafe("context-report");
-  if (!rep) return;
-  document.getElementById("reportTable").innerHTML =
-    rep.rows.map(r => `<tr><td style="padding:3px 6px;border-top:1px solid var(--line)">
-      ${r.controllable ? "🎛" : "📎"} ${esc(r.label)}</td>
-      <td style="text-align:right">${esc(r.tokens ?? "—")}</td>
-      <td style="color:var(--muted)">${esc(r.advice)}</td></tr>`).join("") +
-    `<tr><td style="padding:3px 6px"><b>합계(추정)</b></td>
-     <td style="text-align:right"><b>${esc(rep.total_estimate)}</b></td><td></td></tr>`;
-}
-
 async function load() {
   const r = await brainSafe("scan");
-  if (!r) { document.getElementById("list").innerHTML = ""; return; }
-  items = r.items;
+  if (r) items = r.items;
   render();
-  loadRecs();
-  loadSettings();
-  loadReport();
+  loadRecs(); loadSettings(); loadReport();
 }
 
+/* ── 이벤트 ── */
 document.addEventListener("click", e => {
+  const nav = e.target.closest(".nav");
+  if (nav) { view = nav.dataset.view; render(); return; }
   const b = e.target.closest("button"); if (!b) return;
   if (b.dataset.act === "on") activatePlugin(b.dataset.plugin, b.dataset.invoke);
   else if (b.dataset.act === "copy") copyInvoke(b.dataset.invoke);
@@ -202,12 +294,17 @@ document.addEventListener("click", e => {
   } else if (b.dataset.act === "wizard") inv("open_wizard");
   else if (b.id === "refresh") load();
 });
-document.getElementById("groupBy").addEventListener("change", render);
-document.getElementById("fDisabled").addEventListener("change", render);
+document.addEventListener("change", e => {
+  if (e.target.id === "defPolicy") saveConfig({ default_policy: e.target.value });
+  else if (e.target.id === "notifs") saveConfig({ notifications_enabled: e.target.checked });
+});
 document.getElementById("q").addEventListener("input", render);
-document.getElementById("defPolicy").addEventListener("change",
-  e => saveConfig({ default_policy: e.target.value }));
-document.getElementById("notifs").addEventListener("change",
-  e => saveConfig({ notifications_enabled: e.target.checked }));
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    document.getElementById("q").focus();
+    document.getElementById("q").select();
+  }
+});
 load();
 </script></body></html>

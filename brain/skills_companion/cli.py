@@ -1,5 +1,6 @@
 import argparse
 import json
+import sys
 
 from . import (activation, context_report, inventory, lightweight, llm_refine,
                paths, recommender, revert, scanner, stores, transcripts)
@@ -143,7 +144,13 @@ def main(argv=None):
     elif args.cmd == "uninstall-hooks":
         from . import installer
         out = installer.uninstall_hooks(args.script)
-    print(json.dumps(out, ensure_ascii=False))
+    # Emit UTF-8 explicitly. On Windows, stdout defaults to the locale codepage
+    # (e.g. cp949), which crashes on non-ASCII (— / Korean) and would corrupt
+    # the bytes the Tauri shell parses as UTF-8. Writing to the byte buffer is
+    # platform-independent and matches what the shell expects.
+    sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
+    sys.stdout.buffer.write(b"\n")
+    sys.stdout.buffer.flush()
     return 0
 
 

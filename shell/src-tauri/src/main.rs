@@ -16,16 +16,61 @@ use tauri_plugin_notification::NotificationExt;
 
 struct RecState(Mutex<Vec<Value>>);
 
-fn brain_dir() -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    format!("{home}/Desktop/Work_with_Claude_Mac/skills-companion/brain")
+// Per-user app-support root. macOS keeps its historical location; Windows uses
+// %APPDATA% (there is no HOME nor ~/Library there).
+fn app_support() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        let base = std::env::var("APPDATA").unwrap_or_default();
+        format!("{base}\\skills-companion")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{home}/Library/Application Support/skills-companion")
+    }
 }
 
+fn brain_dir() -> String {
+    // On macOS, debug (cargo tauri dev) uses the live source tree; release uses
+    // a copy outside ~/Desktop so a GUI/launchd-spawned process isn't blocked
+    // reading an iCloud/TCC-managed Desktop folder. Windows always uses the
+    // deployed copy under %APPDATA%.
+    #[cfg(all(debug_assertions, not(target_os = "windows")))]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{home}/Desktop/Work_with_Claude_Mac/skills-companion/brain")
+    }
+    #[cfg(not(all(debug_assertions, not(target_os = "windows"))))]
+    {
+        format!("{}/brain", app_support())
+    }
+}
+
+fn work_dir() -> String {
+    // Neutral, always-local working directory for brain subprocesses. When the
+    // app is launched by launchd/LaunchServices its cwd is `/`; running the
+    // corpus/scan logic from `/` can block on unresponsive root entries. A
+    // dedicated empty dir keeps cwd-based logic cheap and predictable.
+    let d = format!("{}/workdir", app_support());
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
+// `python3` on macOS; on Windows the launcher `py` selects a system Python 3
+// (there is no `python3` on the default Windows PATH).
+#[cfg(target_os = "windows")]
+const PYTHON: (&str, &[&str]) = ("py", &["-3"]);
+#[cfg(not(target_os = "windows"))]
+const PYTHON: (&str, &[&str]) = ("python3", &[]);
+
 fn run_brain(args: &[&str]) -> Result<Value, String> {
-    let out = Command::new("python3")
+    let out = Command::new(PYTHON.0)
+        .args(PYTHON.1)
         .args(["-m", "skills_companion.cli"])
         .args(args)
         .env("PYTHONPATH", brain_dir())
+        .current_dir(work_dir())
         .output()
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
