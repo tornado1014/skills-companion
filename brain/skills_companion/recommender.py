@@ -10,14 +10,46 @@ STOPWORDS = {
 
 BOOST_DISABLED = 1.5
 
+# 한글 어절 끝 조사 — 긴 것 먼저 매칭
+_JOSA = sorted([
+    "에서부터", "으로부터", "으로서", "으로써", "에게서", "까지", "부터",
+    "처럼", "보다", "에서", "에게", "한테", "으로", "이나", "이라",
+    "라도", "마저", "조차", "은", "는", "이", "가", "을", "를",
+    "에", "의", "도", "만", "와", "과", "로",
+], key=len, reverse=True)
 
-def tokenize(text):
+# 어미·기능어 bigram 차단 세트 (스펙 1.4 초기 목록, 구현 중 확장 가능)
+BIGRAM_STOP = {
+    "니다", "습니", "세요", "하세", "어요", "예요", "해줘", "해서", "하는",
+    "있는", "없는", "그리", "리고", "하지", "지만", "에서", "으로", "한다",
+    "했다", "합니", "입니", "것을", "것이", "그것", "저것",
+}
+
+
+def _strip_josa(word):
+    for j in _JOSA:
+        if word.endswith(j) and len(word) - len(j) >= 2:
+            return word[: -len(j)]
+    return word
+
+
+def tokenize_ex(text):
     text = text.lower()
     en = [t for t in re.findall(r"[a-z][a-z0-9_-]{1,}", text) if t not in STOPWORDS]
-    bigrams = []
+    tokens = list(en)
+    visible = set(en)
     for chunk in re.findall(r"[가-힣]{2,}", text):
-        bigrams.extend(chunk[i:i + 2] for i in range(len(chunk) - 1))
-    return en + bigrams
+        stem = _strip_josa(chunk)
+        if len(stem) >= 2:
+            tokens.extend((stem, stem))          # 온전 토큰 2배 가중
+            visible.add(stem)
+        tokens.extend(b for b in (chunk[i:i + 2] for i in range(len(chunk) - 1))
+                      if b not in BIGRAM_STOP)
+    return {"tokens": tokens, "visible": visible}
+
+
+def tokenize(text):
+    return tokenize_ex(text)["tokens"]
 
 
 def _corpus(item):
