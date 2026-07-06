@@ -20,8 +20,20 @@ def test_recommend_uses_newest_session(claude_home, write_transcript, capsys):
     write_transcript("S9", ["analyze the codebase architecture knowledge graph"])
     out = _run(capsys, ["recommend", "--top", "3"])
     assert out["session"] == "S9"
+    assert out["session_title"] is None       # no ai-title record yet
     assert out["recommendations"][0]["item"]["invoke"] == \
         "/understand-anything:understand"
+
+
+def test_recommend_includes_session_title(claude_home, write_transcript, capsys):
+    f = write_transcript("S10", ["analyze the codebase architecture"])
+    with open(f, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"type": "ai-title",
+                             "aiTitle": "skills-companion 앱"},
+                            ensure_ascii=False) + "\n")
+    out = _run(capsys, ["recommend", "--top", "3"])
+    assert out["session"] == "S10"
+    assert out["session_title"] == "skills-companion 앱"
 
 
 def test_activate_session_end_roundtrip(claude_home, write_transcript, capsys):

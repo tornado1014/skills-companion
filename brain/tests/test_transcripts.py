@@ -55,6 +55,43 @@ def test_extract_signals_v2_defaults_on_missing_file(claude_home):
                    "user_texts": [], "user_msg_count": 0}
 
 
+def _append(path, obj):
+    with open(path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def test_session_title_returns_ai_title(write_transcript):
+    f = write_transcript("T1", ["작업"])
+    _append(f, {"type": "ai-title", "sessionId": "T1",
+                "aiTitle": "skills-companion 앱 마리 설치"})
+    assert transcripts.session_title(f) == "skills-companion 앱 마리 설치"
+
+
+def test_session_title_uses_last_when_regenerated(write_transcript):
+    f = write_transcript("T2", ["작업"])
+    _append(f, {"type": "ai-title", "aiTitle": "초기 제목"})
+    _append(f, {"type": "user", "message": {"role": "user", "content": "더"}})
+    _append(f, {"type": "ai-title", "aiTitle": "갱신된 제목"})
+    assert transcripts.session_title(f) == "갱신된 제목"
+
+
+def test_session_title_none_when_absent(write_transcript):
+    f = write_transcript("T3", ["작업"])
+    assert transcripts.session_title(f) is None
+
+
+def test_session_title_missing_file():
+    assert transcripts.session_title("/nonexistent/x.jsonl") is None
+
+
+def test_session_title_skips_garbage(write_transcript):
+    f = write_transcript("T4", ["작업"])
+    with open(f, "a", encoding="utf-8") as fh:
+        fh.write('{"aiTitle": broken json\n')  # matches prefilter, bad JSON
+    _append(f, {"type": "ai-title", "aiTitle": "정상 제목"})
+    assert transcripts.session_title(f) == "정상 제목"
+
+
 def test_live_sessions_threshold_and_signal(write_transcript, claude_home):
     now = time.time()
     write_transcript("LIVE1", ["x"], mtime=now)

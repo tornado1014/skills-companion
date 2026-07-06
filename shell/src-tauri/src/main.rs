@@ -198,11 +198,26 @@ fn handle_rec_click(app: &AppHandle, idx: usize) {
     }
 }
 
-fn rebuild_tray(app: &AppHandle, recs: &[Value]) -> tauri::Result<()> {
+// Human-readable name of the session the recommendations are for: Claude Code's
+// AI title when present, else a short session id, so the user can tell which of
+// several concurrent sessions the tray is currently tracking.
+fn session_label(title: Option<&str>, session: Option<&str>) -> String {
+    match (title, session) {
+        (Some(t), _) if !t.trim().is_empty() => t.to_string(),
+        (_, Some(s)) if !s.is_empty() => format!("세션 {}", &s[..s.len().min(8)]),
+        _ => "활성 세션 없음".to_string(),
+    }
+}
+
+fn rebuild_tray(app: &AppHandle, recs: &[Value], label: &str) -> tauri::Result<()> {
     match app.state::<RecState>().0.lock() {
         Ok(mut guard) => *guard = recs.to_vec(),
         Err(poisoned) => *poisoned.into_inner() = recs.to_vec(),
     }
+    // Disabled header showing which session these recommendations are for.
+    let header = MenuItem::with_id(app, "session", format!("📍 {label}"), false,
+                                   None::<&str>)?;
+    let head_sep = PredefinedMenuItem::separator(app)?;
     let mut rec_items: Vec<MenuItem<tauri::Wry>> = vec![];
     for (i, r) in recs.iter().take(3).enumerate() {
         let mark = if r["kind"] == "actionable" { "⚡" } else { "💡" };
@@ -216,7 +231,8 @@ fn rebuild_tray(app: &AppHandle, recs: &[Value]) -> tauri::Result<()> {
                                    None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
-    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![];
+    let mut refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> = vec![&header,
+                                                                        &head_sep];
     for mi in &rec_items {
         refs.push(mi);
     }
@@ -226,6 +242,7 @@ fn rebuild_tray(app: &AppHandle, recs: &[Value]) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &refs)?;
     if let Some(tray) = app.tray_by_id("main") {
         tray.set_menu(Some(menu))?;
+        let _ = tray.set_tooltip(Some(format!("Skills Companion — {label}")));
     }
     Ok(())
 }
@@ -257,7 +274,9 @@ fn poll_once(app: &AppHandle, notified: &mut HashSet<String>) {
         .unwrap_or(false);
     if let Ok(v) = run_brain(&["recommend", "--top", "3"]) {
         let recs = v["recommendations"].as_array().cloned().unwrap_or_default();
-        if let Err(e) = rebuild_tray(app, &recs) {
+        let label = session_label(v["session_title"].as_str(),
+                                  v["session"].as_str());
+        if let Err(e) = rebuild_tray(app, &recs, &label) {
             eprintln!("rebuild_tray failed: {e}");
         }
         if notifications_on {

@@ -64,6 +64,28 @@ def extract_signals(path, last_n=30, tail_bytes=400_000):
             "user_texts": user_texts[-last_n:], "user_msg_count": user_msg_count}
 
 
+def session_title(path):
+    """Return the session's most recent Claude Code AI title — the
+    human-readable name shown in the session picker, stored in `ai-title`
+    records — or None if the session has no title yet. Uses a substring
+    pre-filter so a large transcript isn't JSON-parsed line by line."""
+    title = None
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if '"aiTitle"' not in line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(d, dict) and d.get("aiTitle"):
+                    title = d["aiTitle"]
+    except OSError:
+        return None
+    return title
+
+
 def session_path(session_id):
     for f in paths.projects_dir().glob(f"*/{session_id}.jsonl"):
         return str(f)

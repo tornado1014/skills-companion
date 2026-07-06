@@ -24,6 +24,8 @@ def _cmd_recommend(args):
     else:
         recs = local[:args.top]
     return {"session": sess["session_id"] if sess else None,
+            "session_title": transcripts.session_title(sess["path"]) if sess
+            else None,
             "recommendations": recs}
 
 
