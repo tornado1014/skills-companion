@@ -6,6 +6,7 @@
   "build": { "frontendDist": "../ui" },
   "app": {
     "withGlobalTauri": true,
+    "security": { "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'" },
     "windows": [
       { "label": "main", "title": "Skills Companion",
         "width": 980, "height": 720, "visible": false }
