@@ -1,16 +1,27 @@
 import argparse
 import json
 
-from . import (activation, context_report, inventory, lightweight, paths,
-               recommender, revert, scanner, stores, transcripts)
+from . import (activation, context_report, inventory, lightweight, llm_refine,
+               paths, recommender, revert, scanner, stores, transcripts)
 
 
 def _cmd_recommend(args):
     sess = transcripts.newest_session()
-    signals = (transcripts.extract_signals(sess["path"])
-               if sess else {"texts": [], "tools": []})
+    signals = (transcripts.extract_signals(sess["path"]) if sess
+               else {"texts": [], "tools": [], "cwd": "",
+                     "user_texts": [], "user_msg_count": 0})
     items = scanner.scan()["items"]
-    recs = recommender.recommend(items, signals, top_k=args.top)
+    cwd = signals.get("cwd", "")
+    local = recommender.recommend(
+        items, signals, top_k=max(args.top, 12),
+        history=stores.history_for(cwd),
+        project_tokens=recommender.project_tokens(cwd))
+    if sess:
+        recs = llm_refine.refine(
+            sess["session_id"], signals.get("user_texts", []),
+            signals.get("user_msg_count", 0), local, top_k=args.top)
+    else:
+        recs = local[:args.top]
     return {"session": sess["session_id"] if sess else None,
             "recommendations": recs}
 

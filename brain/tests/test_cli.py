@@ -78,6 +78,15 @@ def test_cli_activate_records_history_with_cwd(claude_home, write_transcript, ca
     assert stores.history_for("/tmp/work") == {UA: 1}
 
 
+def test_recommend_blends_history_for_cwd(claude_home, write_transcript, capsys):
+    write_transcript("SH", ["시작"], cwd="/tmp/work")   # umc=1 → 프로젝트/이력 가중 우세
+    _run(capsys, ["activate", "--plugin", UA, "--session", "SH"])
+    out = _run(capsys, ["recommend", "--top", "3"])
+    top = out["recommendations"][0]
+    assert top["item"]["invoke"] == "/understand-anything:understand"
+    assert any("1회 사용" in r for r in top["reasons"])
+
+
 def test_cli_disable_plugin(claude_home, capsys):
     out = _run(capsys, ["disable-plugin", "--plugin",
                         "korean-law@korean-law-marketplace"])
