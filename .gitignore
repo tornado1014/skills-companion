@@ -3,3 +3,4 @@ __pycache__/
 shell/src-tauri/target/
 shell/src-tauri/gen/
 .omc/
+.superpowers/

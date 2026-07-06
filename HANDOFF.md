@@ -1,78 +1,66 @@
-# HANDOFF — Task 15 (실환경 마이그레이션) 실행용
+# HANDOFF — 추천 로직 v2 + 카탈로그 UI v2 (플랜 작성 → 구현)
 
-> 새 세션의 실행자에게: 이 문서는 구현 세션(2026-07-06)의 최종 스냅샷이다.
-> **20개 태스크 중 19개 완료** — 남은 것은 Task 15 하나이며, 사용자가 이미
-> 실행을 승인하고 이 세션을 시작했다. Task 15는 실제 `~/.claude`를 바꾸는
-> 유일한 태스크다: 신중히, 단계마다 검증하며, 되돌릴 수 있게 진행하라.
+> 새 세션의 실행자에게: 이 문서는 2026-07-06 세션(Task 15 실환경 마이그레이션 +
+> v2 브레인스토밍)의 최종 스냅샷이다. **설계는 사용자 승인이 끝났다** — 이 세션의
+> 첫 임무는 superpowers:writing-plans로 구현 플랜을 만드는 것이고, 설계를 다시
+> 여는 것이 아니다.
 
 ## 현재 상태 (실측, 2026-07-06)
 
-- HEAD `02a8c75` = origin/main. 커밋 전부 push됨.
+- **Task 20/20 완료.** 앱이 실환경에서 상주 중: `/Applications/Skills Companion.app`,
+  LaunchAgent `com.earendel.skills-companion` (RunAtLoad, KeepAlive=false,
+  stderr → `~/Library/Logs/skills-companion.log`).
+- HEAD = origin/main (push 완료). 주요 최근 커밋: CSP 추가(bd254fc), installer(587d02d),
+  Reopen/창닫기 결함 수정(091bdc1), README 20/20(3d2d8e4), StandardErrorPath(4ef2440).
 - brain 테스트 **55개 전부 통과** (`cd brain && python3 -m pytest -q`).
-- `cargo build` 클린 (debug). 릴리스 빌드(`cargo tauri build`)는 아직 안 함.
-- 최종 전체 브랜치 리뷰(opus) 통과. 유일한 결함(wizard `#err`)은 02a8c75로 수정됨.
-- 태스크별 리뷰 기록·Minor 발견 원장: `.superpowers/sdd/progress.md`
-  (**git 미추적 로컬 파일** — 이 체크아웃에만 존재. 지우지 말 것).
-- 툴체인: rustup + tauri-cli 2.11.4 설치됨 (`source "$HOME/.cargo/env"` 필요).
+- 훅 설치됨: SessionEnd 신호 훅 + 치트시트 SessionStart 훅 제거됨.
+  `korean-law-key-sync.py` 훅 보존 확인됨.
+- `/myskills`는 앱을 여는 스킬로 리포인트됨. 구 치트시트는 `~/.claude/backups/`.
 
-## 사전점검 결과 (2026-07-06, 읽기 전용으로 이미 통과)
+## 이번 미션
 
-1. **`claude mcp` 플래그 현행 확인** — `remove <name> -s user` /
-   `add-json <name> <json> -s user` 유효. `lightweight.py:88,101`이 이미
-   `-s user`를 넘김. (기본 scope는 "local"이므로 이 플래그가 핵심.)
-2. **치트시트 훅 문자열 매칭 확인** — 실제 settings.json의 SessionStart 훅은
-   `bash /Users/earendel/.claude/skills-cheatsheet/open.sh` →
-   `installer.remove_cheatsheet_hook`의 부분문자열 `skills-cheatsheet/open.sh`와
-   일치. 같이 있는 `korean-law-key-sync.py` 훅은 필터가 보존함(테스트 검증됨).
-3. **wizard `#err` 수정 반영** — 3개 UI 파일 모두 `id="err"` 존재.
+**스펙**: `docs/superpowers/specs/2026-07-06-recommender-v2-ui-v2-design.md`
+(사용자 승인 완료 — Part 1 추천 로직 v2, Part 2 카탈로그 UI v2, 결정 근거 포함)
 
-## Task 15 실행 순서 (플랜 + 최종 리뷰 전제조건 병합)
+1. superpowers:writing-plans로 구현 플랜 작성 → 사용자 승인.
+2. 구현: Part 1(brain, TDD) → Part 2(UI, dev 시각 검증) → 통합 스모크 → 재배포.
+3. 스펙의 "구현 순서 권고" 절 참조. 기존 테스트 55개 회귀 금지.
 
-플랜 원문: `docs/superpowers/plans/2026-07-06-skills-companion.md` Task 15
-(§2356~2461). 아래는 최종 리뷰가 요구한 선행 항목을 끼워 넣은 권장 순서:
+## 환경·절차 (실측 노하우)
 
-1. **CSP 추가 (릴리스 빌드 전에!)** — `shell/src-tauri/tauri.conf.json`의
-   `app`에 `"security": {"csp": "default-src 'self'; style-src 'self' 'unsafe-inline'"}`
-   추가. Tauri v2가 번들 자산의 인라인 스크립트에 해시를 자동 주입함.
-   `cargo tauri dev`로 메인 창이 정상 렌더링되는지 사용자와 함께 확인 후 커밋.
-   (구현 세션에서 미룬 이유: 시각 검증 없이 CSP를 넣으면 UI가 깨져도 모름.)
-2. **수동 백업** — `cp ~/.claude/settings.json ~/.claude/settings.json.pre-t15`
-   (앱이 타임스탬프 백업을 만들지만 별도 1부가 싼 보험).
-3. **플랜 Step 1** — `cargo tauri build`(수 분, **run_in_background**) →
-   `/Applications`에 복사 → 실행 + pgrep 확인. 트레이 아이콘은 사용자가 확인.
-4. **플랜 Step 2** — `install-hooks` (SessionEnd 신호 훅 추가 + 치트시트
-   SessionStart 훅 제거가 한 번에 수행됨) → 브리프의 검증 파이썬 스니펫 실행.
-5. **플랜 Step 3** — `/myskills` SKILL.md 교체 + 치트시트 HTML을
-   `~/.claude/backups/`로 아카이브 (mv, 되돌림 가능).
-6. **플랜 Step 4** — `installer/com.earendel.skills-companion.plist` 생성,
-   `~/Library/LaunchAgents/`에 복사, `launchctl load`, 등록 확인.
-7. **플랜 Step 5 스모크 테스트** — 사용자와 인터랙티브로. 추천 트레이 노출,
-   활성화 클릭→클립보드/자동타이핑, `/exit`→되돌림 다이얼로그, `/myskills`.
-   대기 불가한 leak-sweep 검증은 브리프가 허용한 가짜 old-mtime 방식으로.
-8. **플랜 Step 6 커밋** + README "현재 상태"를 20/20으로 갱신 → push.
+- Rust 툴체인: `source "$HOME/.cargo/env"` 필수. tauri-cli 2.11.4.
+- 빌드: `cd shell/src-tauri && cargo tauri build` (~2분, run_in_background 권장).
+- **재배포 절차**: `launchctl unload ~/Library/LaunchAgents/com.earendel.skills-companion.plist`
+  → `rm -rf "/Applications/Skills Companion.app"` → 번들 `cp -R` → `launchctl load ...`
+  → `pgrep -fl skills-companion`으로 단일 인스턴스 확인.
+- dev 검증: `cargo tauri dev` (릴리스 인스턴스와 동시 폴링되므로 헷갈리면 한쪽 종료).
+- 앱 stderr는 LaunchAgent 로그 파일에서 확인 가능 (open_revert 실패 등).
 
-## 알려진 한계 (이번엔 고치지 않아도 되지만 인지할 것)
+## 함정 (이번 세션에서 실제로 밟은 것)
 
-- `main.rs`의 `brain_dir()`은 `~/Desktop/Work_with_Claude_Mac/skills-companion/brain`
-  하드코딩 — 이 머신에서는 정상 동작. 배포/패키징 시 수정 필요(원장 기록됨).
-- `main.rs`는 PATH의 `python3`, 훅 스크립트는 `/usr/bin/python3` 사용.
-  LaunchAgent 기본 PATH에 `/usr/bin`이 포함되므로 양쪽 다 해석되지만,
-  앱이 LaunchAgent로 떴을 때 brain 호출이 실패하면 이 지점부터 의심할 것
-  (증상: 트레이 추천 없음 / UI에 "브레인 호출 실패").
-- 되돌림 방법: 훅 = `uninstall-hooks` verb + settings 백업 복원, 치트시트 =
-  backups에서 mv 복원 + SessionStart 훅 재추가, LaunchAgent = `launchctl unload` + plist 삭제.
+- **cwd가 있는 셸에서 파일을 만들면 OMC 훅이 `.omc/` 상태 디렉터리를 그 cwd에
+  생성한다.** `capabilities/` 안에 `.omc`가 생기면 tauri 빌드가
+  "missing field identifier"로 실패한다 — capabilities/에는 capability JSON만 둘 것.
+- **`newest_session()` 휴리스틱은 동시 세션이 많으면 오귀속한다** (활성화가 조종
+  세션에 귀속된 사례 관측). 스펙 1.2가 이 한계를 명시적으로 수용함 — 고치려 들지 말 것.
+- 되돌림 다이얼로그는 "그 플러그인을 쓰는 마지막 살아있는 세션"이 끝날 때만 뜬다
+  (held 규칙, revert.py). 스모크 테스트 시 다른 세션이 물고 있으면 조용히 kept 처리.
+- 다이얼로그 검증 시 가짜 leak: `stores.ledger_add('<fake-sid>', '<꺼진 plugin>')`
+  → transcript 없는 sid는 즉시 leak → 20초 내 다이얼로그. 끝나면 ledger 정리 확인.
 
 ## 절대 규칙 (스펙 C9/C12 — 변함없음, 서브에이전트에게도 전파)
 
 앱/테스트/실행자 모두 다음 파일을 **절대 쓰지 않는다**:
 `~/.claude.json`(직접) · `installed_plugins.json` · CLAUDE.md · MEMORY.md ·
-앱 소유가 아닌 훅(특히 `korean-law-key-sync.py`는 건드리지 말 것).
+앱 소유가 아닌 훅(특히 `korean-law-key-sync.py`).
 MCP 변경은 `claude mcp remove/add-json -s user` 서브프로세스만.
 `~/.claude/settings.json` 쓰기는 항상 앱 CLI 경유(atomic + 타임스탬프 백업).
+brain은 stdlib 전용 유지(외부 의존성 도입 금지). UI는 외부 리소스 0(CSP).
 
 ## 문서
 
-- 플랜: `docs/superpowers/plans/2026-07-06-skills-companion.md` (Task 15 섹션)
-- 스펙: `docs/superpowers/specs/2026-07-06-skills-companion-design.md` (C1~C13 재조사 금지)
-- 구현 세션 리뷰 원장: `.superpowers/sdd/progress.md` (로컬)
-- 태스크별 브리프/리포트: `.superpowers/sdd/task-*-{brief,report}.md` (로컬)
+- 신규 스펙: `docs/superpowers/specs/2026-07-06-recommender-v2-ui-v2-design.md`
+- 원 스펙(C1~C13): `docs/superpowers/specs/2026-07-06-skills-companion-design.md`
+- 완료된 플랜(참고): `docs/superpowers/plans/2026-07-06-skills-companion.md`
+- UI 목업(로컬): `.superpowers/brainstorm/2649-1783305889/content/` —
+  `catalog-combined.html`(구조 확정안), `visual-style.html`(스타일 B 확정)
